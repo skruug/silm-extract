@@ -1,0 +1,3 @@
+[submodule "silm-extract/third-party/silm-depack"]
+	path = silm-extract/third-party/silm-depack
+	url = https://github.com/maestun/silm-depack.git
