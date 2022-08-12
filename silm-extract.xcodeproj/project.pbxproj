@@ -32,8 +32,8 @@
 /* Begin PBXFileReference section */
 		6888D8B128A6DE0700678F7E /* utils.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = utils.cpp; sourceTree = "<group>"; };
 		6888D8B228A6DE0700678F7E /* utils.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = utils.hpp; sourceTree = "<group>"; };
-		6888D8B428A6E7CE00678F7E /* LICENSE.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = LICENSE.md; sourceTree = "<group>"; };
-		6888D8B528A6E93500678F7E /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		6888D8B628A7045800678F7E /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		6888D8B728A7045800678F7E /* LICENSE.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = LICENSE.md; sourceTree = "<group>"; };
 		68C976D428A17A6A003E8C13 /* silm-extract */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "silm-extract"; sourceTree = BUILT_PRODUCTS_DIR; };
 		68C976D728A17A6A003E8C13 /* main.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = main.cpp; sourceTree = "<group>"; };
 		68C976E028A17D25003E8C13 /* LICENSE.md */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = net.daringfireball.markdown; path = LICENSE.md; sourceTree = "<group>"; };
@@ -68,6 +68,8 @@
 		68C976CB28A17A6A003E8C13 = {
 			isa = PBXGroup;
 			children = (
+				6888D8B728A7045800678F7E /* LICENSE.md */,
+				6888D8B628A7045800678F7E /* README.md */,
 				68C976D628A17A6A003E8C13 /* silm-extract */,
 				68C976D528A17A6A003E8C13 /* Products */,
 			);
@@ -90,8 +92,6 @@
 				6888D8B128A6DE0700678F7E /* utils.cpp */,
 				6888D8B228A6DE0700678F7E /* utils.hpp */,
 				68C976DE28A17D25003E8C13 /* third-party */,
-				6888D8B428A6E7CE00678F7E /* LICENSE.md */,
-				6888D8B528A6E93500678F7E /* README.md */,
 			);
 			path = "silm-extract";
 			sourceTree = "<group>";
