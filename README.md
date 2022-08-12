@@ -6,8 +6,15 @@ Bitmaps are exported as 2/8 or 32 bit PNG files, palettes as ACT files (useable 
 This tool require Maestun silm-depack to unpack script files, or already unpacked files.
 For example Xfddecrunch on Amiga.
 
-##  Usage
+##  Compiling from source
 
+At the moment the only method to get it running. :-)
+Clone repo with submodules: git clone --recurse-submodules https://github.com/skruug/silm-extract.git
+If you are mac user, just use xcode project. If you are not, you have to create makefile yourself.
+Link with libpng.
+
+##  Usage
+```shell
 silm-extract <file> | <dir> [options]
 
 Options:
@@ -16,3 +23,4 @@ Options:
   -o <dir>  Output directory.
   -p <file> Palette override.
   -f        Force 32 bit depth for all sprites.
+```
