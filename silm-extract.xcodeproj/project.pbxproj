@@ -7,7 +7,14 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		6888D8B328A6DE0700678F7E /* utils.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 6888D8B128A6DE0700678F7E /* utils.cpp */; };
 		68C976D828A17A6A003E8C13 /* main.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 68C976D728A17A6A003E8C13 /* main.cpp */; };
+		68C976F528A17D26003E8C13 /* Makefile in Sources */ = {isa = PBXBuildFile; fileRef = 68C976E128A17D25003E8C13 /* Makefile */; };
+		68C976F628A17D26003E8C13 /* depack.c in Sources */ = {isa = PBXBuildFile; fileRef = 68C976ED28A17D25003E8C13 /* depack.c */; };
+		68C976F728A17D26003E8C13 /* platform.c in Sources */ = {isa = PBXBuildFile; fileRef = 68C976EE28A17D25003E8C13 /* platform.c */; };
+		68C976F828A17D26003E8C13 /* utils.c in Sources */ = {isa = PBXBuildFile; fileRef = 68C976F028A17D25003E8C13 /* utils.c */; };
+		68C976FA28A17D26003E8C13 /* asm.c in Sources */ = {isa = PBXBuildFile; fileRef = 68C976F328A17D25003E8C13 /* asm.c */; };
+		68C976FD28A1887B003E8C13 /* extractor.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 68C976FB28A1887B003E8C13 /* extractor.cpp */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -23,8 +30,28 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		6888D8B128A6DE0700678F7E /* utils.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = utils.cpp; sourceTree = "<group>"; };
+		6888D8B228A6DE0700678F7E /* utils.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = utils.hpp; sourceTree = "<group>"; };
+		6888D8B428A6E7CE00678F7E /* LICENSE.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = LICENSE.md; sourceTree = "<group>"; };
+		6888D8B528A6E93500678F7E /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		68C976D428A17A6A003E8C13 /* silm-extract */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "silm-extract"; sourceTree = BUILT_PRODUCTS_DIR; };
 		68C976D728A17A6A003E8C13 /* main.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = main.cpp; sourceTree = "<group>"; };
+		68C976E028A17D25003E8C13 /* LICENSE.md */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = net.daringfireball.markdown; path = LICENSE.md; sourceTree = "<group>"; };
+		68C976E128A17D25003E8C13 /* Makefile */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.make; path = Makefile; sourceTree = "<group>"; };
+		68C976E228A17D25003E8C13 /* README.md */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		68C976E328A17D25003E8C13 /* .gitignore */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = .gitignore; sourceTree = "<group>"; };
+		68C976EB28A17D25003E8C13 /* utils.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = utils.h; sourceTree = "<group>"; };
+		68C976EC28A17D25003E8C13 /* config.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = config.h; sourceTree = "<group>"; };
+		68C976ED28A17D25003E8C13 /* depack.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = depack.c; sourceTree = "<group>"; };
+		68C976EE28A17D25003E8C13 /* platform.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = platform.c; sourceTree = "<group>"; };
+		68C976EF28A17D25003E8C13 /* asm.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = asm.h; sourceTree = "<group>"; };
+		68C976F028A17D25003E8C13 /* utils.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = utils.c; sourceTree = "<group>"; };
+		68C976F128A17D25003E8C13 /* main.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = main.c; sourceTree = "<group>"; };
+		68C976F228A17D25003E8C13 /* depack.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = depack.h; sourceTree = "<group>"; };
+		68C976F328A17D25003E8C13 /* asm.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = asm.c; sourceTree = "<group>"; };
+		68C976F428A17D25003E8C13 /* platform.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = platform.h; sourceTree = "<group>"; };
+		68C976FB28A1887B003E8C13 /* extractor.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = extractor.cpp; sourceTree = "<group>"; };
+		68C976FC28A1887B003E8C13 /* extractor.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = extractor.hpp; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -58,8 +85,52 @@
 			isa = PBXGroup;
 			children = (
 				68C976D728A17A6A003E8C13 /* main.cpp */,
+				68C976FB28A1887B003E8C13 /* extractor.cpp */,
+				68C976FC28A1887B003E8C13 /* extractor.hpp */,
+				6888D8B128A6DE0700678F7E /* utils.cpp */,
+				6888D8B228A6DE0700678F7E /* utils.hpp */,
+				68C976DE28A17D25003E8C13 /* third-party */,
+				6888D8B428A6E7CE00678F7E /* LICENSE.md */,
+				6888D8B528A6E93500678F7E /* README.md */,
 			);
 			path = "silm-extract";
+			sourceTree = "<group>";
+		};
+		68C976DE28A17D25003E8C13 /* third-party */ = {
+			isa = PBXGroup;
+			children = (
+				68C976DF28A17D25003E8C13 /* silm-depack */,
+			);
+			path = "third-party";
+			sourceTree = "<group>";
+		};
+		68C976DF28A17D25003E8C13 /* silm-depack */ = {
+			isa = PBXGroup;
+			children = (
+				68C976E028A17D25003E8C13 /* LICENSE.md */,
+				68C976E128A17D25003E8C13 /* Makefile */,
+				68C976E228A17D25003E8C13 /* README.md */,
+				68C976E328A17D25003E8C13 /* .gitignore */,
+				68C976EA28A17D25003E8C13 /* src */,
+			);
+			path = "silm-depack";
+			sourceTree = "<group>";
+		};
+		68C976EA28A17D25003E8C13 /* src */ = {
+			isa = PBXGroup;
+			children = (
+				68C976F328A17D25003E8C13 /* asm.c */,
+				68C976EF28A17D25003E8C13 /* asm.h */,
+				68C976EC28A17D25003E8C13 /* config.h */,
+				68C976ED28A17D25003E8C13 /* depack.c */,
+				68C976F228A17D25003E8C13 /* depack.h */,
+				68C976F128A17D25003E8C13 /* main.c */,
+				68C976EE28A17D25003E8C13 /* platform.c */,
+				68C976F428A17D25003E8C13 /* platform.h */,
+				68C976F028A17D25003E8C13 /* utils.c */,
+				68C976EB28A17D25003E8C13 /* utils.h */,
+			);
+			path = src;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -119,6 +190,13 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				68C976F828A17D26003E8C13 /* utils.c in Sources */,
+				68C976FA28A17D26003E8C13 /* asm.c in Sources */,
+				68C976F728A17D26003E8C13 /* platform.c in Sources */,
+				6888D8B328A6DE0700678F7E /* utils.cpp in Sources */,
+				68C976F628A17D26003E8C13 /* depack.c in Sources */,
+				68C976FD28A1887B003E8C13 /* extractor.cpp in Sources */,
+				68C976F528A17D26003E8C13 /* Makefile in Sources */,
 				68C976D828A17A6A003E8C13 /* main.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -239,7 +317,11 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
+				HEADER_SEARCH_PATHS = /opt/homebrew/include;
+				LIBRARY_SEARCH_PATHS = /opt/homebrew/lib;
+				OTHER_LDFLAGS = "-lpng";
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				USER_HEADER_SEARCH_PATHS = /opt/homebrew/include;
 			};
 			name = Debug;
 		};
@@ -247,7 +329,11 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
+				HEADER_SEARCH_PATHS = /opt/homebrew/include;
+				LIBRARY_SEARCH_PATHS = /opt/homebrew/lib;
+				OTHER_LDFLAGS = "-lpng";
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				USER_HEADER_SEARCH_PATHS = /opt/homebrew/include;
 			};
 			name = Release;
 		};
