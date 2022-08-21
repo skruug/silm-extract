@@ -589,15 +589,15 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t address, uint32_t entr
                 Entry *entry = get_entry_data(script, address, entries, idx);
                 if (entry->type == Type::image2 || entry->type == Type::image4old || entry->type == Type::image4 || entry->type == Type::image8)
                 {
-                    int clearIndex = 0;
+                    int clear = 0;
                     if (entry->type == Type::image4)
                     {
-                        clearIndex = script[entry->position + 5] + script[entry->position + 4];
+                        clear = script[entry->position + 5] + script[entry->position + 4];
                     }
 
                     if (entry->type == Type::image8)
                     {
-                        clearIndex = script[entry->position + 5];
+                        clear = script[entry->position + 5];
                     }
 
                     bytes[1] = script[entry->position + 0];
@@ -622,7 +622,7 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t address, uint32_t entr
                         for (int a = std::max(0, -xx); a < std::min(width, 320 -xx); a++, ptr++)
                         {
                             uint8_t color = entry->buffer.data[(cmd ? width - (a + 1) : a) + p * width];
-                            if (color != clearIndex)
+                            if (color != clear)
                             {
                                 *ptr = color;
                             }
@@ -732,7 +732,7 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t address, uint32_t entr
 
                     uint8_t *data = new uint8_t[width * height];
 
-                    // int clearIndex = script[location + 5];
+                    // int clear = script[location + 5];
                     int palIndex = script[location + 4];
                     
                     int at = location + 4 + 2;
@@ -935,7 +935,38 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
                     if (_list_only == false)
                     {
                         std::filesystem::path out = _out_dir / (name + " " + std::to_string(i) + ".png");
-                        write_png_file(out.string().c_str(), width, height, PNG_COLOR_TYPE_PALETTE, 8, entry->buffer.data, _override_pal ? _override_pal : _active_pal);
+
+                        if (_force_tc)
+                        {
+                            uint8_t *data = new uint8_t[width * height * 4];
+                    
+                            int clear = -1;
+                            if (entry->type == Type::image4)
+                            {
+                                clear = buffer[location + 5] + buffer[location + 4];
+                            }
+
+                            if (entry->type == Type::image8)
+                            {
+                                clear = buffer[location + 5];
+                            }
+                            
+                            int to = 0;
+                            for (int x = 0; x < width * height; x++)
+                            {
+                                int index = entry->buffer.data[x];
+                                data[to++] = _active_pal[index * 3 + 0];
+                                data[to++] = _active_pal[index * 3 + 1];
+                                data[to++] = _active_pal[index * 3 + 2];
+                                data[to++] = index == clear ? 0x00 : 0xff;
+                            }
+                    
+                            write_png_file(out.string().c_str(), width, height, PNG_COLOR_TYPE_RGBA, 8, data);
+                        }
+                        else
+                        {
+                            write_png_file(out.string().c_str(), width, height, PNG_COLOR_TYPE_PALETTE, 8, entry->buffer.data, _override_pal ? _override_pal : _active_pal);
+                        }
                     }
                     break; }
                     
@@ -991,10 +1022,31 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
                         cout << "  cmd: " << std::dec << std::setw(3) << (int)cmd << " index: " << std::dec << std::setw(3) << (int)index << " at: " << std::dec << x << " x " << std::dec << y << " order: " << std::dec << o << endl;
                     }
                     
+                    // TODO: do composition in 32 bit
                     if (_list_only == false)
                     {
                         std::filesystem::path out = _out_dir / (name + " " + std::to_string(i) + " (draw cmd)" + ".png");
-                        write_png_file(out.string().c_str(), 320, 200, PNG_COLOR_TYPE_PALETTE, 8, entry->buffer.data, _override_pal ? _override_pal : _active_pal);
+
+                        if (_force_tc)
+                        {
+                            uint8_t *data = new uint8_t[320 * 200 * 4];
+                    
+                            int to = 0;
+                            for (int x = 0; x < 320 * 200; x++)
+                            {
+                                int index = entry->buffer.data[x];
+                                data[to++] = _active_pal[index * 3 + 0];
+                                data[to++] = _active_pal[index * 3 + 1];
+                                data[to++] = _active_pal[index * 3 + 2];
+                                data[to++] = 0xff;
+                            }
+                    
+                            write_png_file(out.string().c_str(), 320, 200, PNG_COLOR_TYPE_RGBA, 8, data);
+                        }
+                        else
+                        {
+                            write_png_file(out.string().c_str(), 320, 200, PNG_COLOR_TYPE_PALETTE, 8, entry->buffer.data, _override_pal ? _override_pal : _active_pal);
+                        }
                     }
                     break; }
                     
