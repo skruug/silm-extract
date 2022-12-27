@@ -13,6 +13,7 @@
 #include <png.h>
 #include <stdio.h>
 #include <string>
+#include <vector>
 
 enum alis_platform {
 
@@ -25,8 +26,9 @@ enum alis_platform {
 };
 
 using std::filesystem::path;
+using std::vector;
 
-enum Type {
+enum data_type {
     
     none        = 0,
     image2      = 1,
@@ -40,6 +42,16 @@ enum Type {
     rectangle    = 9,
     unknown12   = 10,
     unknown     = 11
+};
+
+enum extract_type {
+    
+    ex_image       = 1 << 0,
+    ex_video       = 1 << 1,
+    ex_palette     = 1 << 2,
+    ex_draw        = 1 << 3,
+    ex_rectangle   = 1 << 4,
+    ex_everything  = 0xFFFFFFFF
 };
 
 struct Buffer {
@@ -56,9 +68,9 @@ struct Buffer {
 struct Entry {
   
     Entry() { type = none; buffer = Buffer(); };
-    Entry(Type t, uint32_t p, const Buffer& b) { type = t; position = p; buffer = b; };
+    Entry(data_type t, uint32_t p, const Buffer& b) { type = t; position = p; buffer = b; };
 
-    Type type;
+    data_type type;
     uint32_t position;
     Buffer buffer;
 };
@@ -71,12 +83,15 @@ public:
     extractor(alis_platform platform);
     extractor(const path& output, char *palette = NULL, bool force_tc = false, bool list_only = false);
     ~extractor();
+
+    void set_palette(uint8_t *palette);
+    void set_out_dir(const path& output);
     
     bool is_script(const path& file);
     
-    void extract_dir(const path& path);
-    void extract_file(const path& file);
-    void extract_buffer(const std::string& name, uint8_t *buffer, int length);
+    void extract_dir(const path& path, uint32_t etype = ex_everything);
+    void extract_file(const path& file, uint32_t etype = ex_everything, vector<uint8_t *> *pal_overrides = NULL);
+    void extract_buffer(const std::string& name, uint8_t *buffer, int length, uint32_t etype, vector<uint8_t *> *pal_overrides = NULL);
 
 private:
     

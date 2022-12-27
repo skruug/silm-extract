@@ -7,6 +7,7 @@
 
 #include "extractor.hpp"
 
+#include <cmath>
 #include <filesystem>
 #include <iostream>
 #include <fstream>
@@ -59,6 +60,16 @@ extractor::~extractor()
     
 }
 
+void extractor::set_palette(uint8_t *palette)
+{
+    _override_pal = (uint8_t *)palette;
+}
+
+void extractor::set_out_dir(const path& output)
+{
+    _out_dir = output;
+}
+
 bool extractor::is_script(const path& file)
 {
     string e = utils::get_file_ext(file.string());
@@ -74,16 +85,16 @@ bool extractor::is_script(const path& file)
     return false;
 }
 
-void extractor::extract_dir(const path& dir)
+void extractor::extract_dir(const path& dir, uint32_t type)
 {
     for (const auto & file : directory_iterator(dir))
     {
         if (is_script(file.path()))
-            extract_file(file.path());
+            extract_file(file.path(), type);
     }
 }
 
-void extractor::extract_file(const path& file)
+void extractor::extract_file(const path& file, uint32_t type, vector<uint8_t *> *pal_overrides)
 {
     std::string name = utils::get_file_name(file.string(), false);
     cout << name << endl;
@@ -109,7 +120,7 @@ void extractor::extract_file(const path& file)
             unpacked = depack_buffer((uint8_t *)buffer);
             if (unpacked)
             {
-                extract_buffer(name, unpacked, unpacked_size);
+                extract_buffer(name, unpacked, unpacked_size, type, pal_overrides);
                 free(unpacked);
             }
         }
@@ -121,7 +132,7 @@ void extractor::extract_file(const path& file)
             unpacked_size = (int)length;
             unpacked = (uint8_t *)buffer;
 
-            extract_buffer(name, unpacked, unpacked_size);
+            extract_buffer(name, unpacked, unpacked_size, type, pal_overrides);
         }
         
         delete[] buffer;
@@ -137,14 +148,14 @@ void log_data(const uint8_t *p, int f, int s0, int s1, const char *format, ...)
     vprintf(format, args);
     va_end(args);
 
-    char t0[3] = "]";
+    char t0[8] = "]";
     if (s0 > 24)
     {
         s0 = 24;
         strcpy(t0, "...");
     }
 
-    char t1[3] = "]";
+    char t1[8] = "]";
     if (s1 > 24)
     {
         s1 = 24;
@@ -259,15 +270,11 @@ void extractor::write_png_file(const char *filename, int width, int height, png_
 
 int asset_size(const uint8_t *buffer)
 {
-    if (buffer[0] == 0xfe && buffer[1] == 0x00)
+    if (buffer[0] == 0xfe)
     {
-        return 32;
+        return buffer[1] == 0x00 ? 32 : (buffer[1] + 1) * 3;
     }
-    else if (buffer[0] == 0xfe && buffer[1] == 0xff)
-    {
-        return 768;
-    }
-    else if (buffer[0] == 0xff && buffer[1] > 0)
+    else if (buffer[0] == 0xff)
     {
         return buffer[1] * 8;
     }
@@ -413,6 +420,16 @@ void extractor::set_palette(Buffer& script, uint32_t address, uint32_t entries)
             get_entry_data(script, address, entries, i);
             return;
         }
+        else if (h0 == 0xfe && h1 == 0x0f)
+        {
+            get_entry_data(script, address, entries, i);
+            return;
+        }
+        else if (h0 == 0xfe && h1 == 0x1f)
+        {
+            get_entry_data(script, address, entries, i);
+            return;
+        }
         else if (h0 == 0xfe && h1 == 0xff)
         {
             get_entry_data(script, address, entries, i);
@@ -446,44 +463,52 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t address, uint32_t entr
 
     h0 = script[location - 2];
     h1 = script[location - 1];
-    if (h0 == 0xfe && h1 == 0x00)
+    if (h0 == 0xfe)
     {
         uint8_t *palette_data = new uint8_t[256 * 3];
         memcpy(palette_data, _default_pal, 256 * 3);
 
         int to = 0;
-        for (int f = 0; f < 16; f++)
-        {
-            uint8_t r = script[location + f * 2 + 0];
-            r = (r & 0b00000111) << 5;
-            uint8_t g = script[location + f * 2 + 1];
-            g = (g >> 4) << 5;
-            uint8_t b = script[location + f * 2 + 1];
-            b = (b & 0b00000111) << 5;
 
-            palette_data[to++] = r;
-            palette_data[to++] = g;
-            palette_data[to++] = b;
+        if (h1 == 0x00)
+        {
+            for (int f = 0; f < 16; f++)
+            {
+                uint8_t r = script[location + f * 2 + 0];
+                r = (r & 0b00000111) << 5;
+                uint8_t g = script[location + f * 2 + 1];
+                g = (g >> 4) << 5;
+                uint8_t b = script[location + f * 2 + 1];
+                b = (b & 0b00000111) << 5;
+                
+                palette_data[to++] = r;
+                palette_data[to++] = g;
+                palette_data[to++] = b;
+            }
+            
+            _active_pal = palette_data;
+            return (_entry_map[index] = new Entry(data_type::palette4, location, Buffer(palette_data, 256 * 3)));
         }
-        
-        _active_pal = palette_data;
-        return (_entry_map[index] = new Entry(Type::palette4, location, Buffer(palette_data, 256 * 3)));
+        else
+        {
+            for (int f = 0; f < h1 + 1; f++)
+            {
+                palette_data[to++] = script[2 + location + (f * 3) + 0];
+                palette_data[to++] = script[2 + location + (f * 3) + 1];
+                palette_data[to++] = script[2 + location + (f * 3) + 2];
+            }
+            
+            _active_pal = palette_data;
+            return (_entry_map[index] = new Entry(data_type::palette8, location, Buffer(palette_data, 256 * 3)));
+        }
     }
-    else if (h0 == 0xfe && h1 == 0xff)
+    else if (h0 == 0xff && h1 == 0)
     {
-        uint8_t *palette_data = new uint8_t[256 * 3];
-        memcpy(palette_data, _default_pal, 256 * 3);
+        uint8_t *data = new uint8_t[320 * 200];
+        memset(data, 0, 320 * 200);
 
-        int to = 0;
-        for (int f = 0; f < 256; f++)
-        {
-            palette_data[to++] = script[2 + location + (f * 3) + 0];
-            palette_data[to++] = script[2 + location + (f * 3) + 1];
-            palette_data[to++] = script[2 + location + (f * 3) + 2];
-        }
-        
-        _active_pal = palette_data;
-        return (_entry_map[index] = new Entry(Type::palette8, location, Buffer(palette_data, 256 * 3)));
+        // clear screen?
+        return (_entry_map[index] = new Entry(data_type::draw, location, Buffer(data, 320 * 200)));
     }
     else if (h0 == 0xff && h1 > 0)
     {
@@ -516,6 +541,10 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t address, uint32_t entr
             bytes[0] = script[b * 8 + location + 3];
             int16_t x = (*(int16_t *)(bytes));
 
+            bytes[1] = script[b * 8 + location + 4];
+            bytes[0] = script[b * 8 + location + 5];
+            int16_t d = (*(int16_t *)(bytes));
+
             bytes[1] = script[b * 8 + location + 6];
             bytes[0] = script[b * 8 + location + 7];
             int16_t y = (*(int16_t *)(bytes));
@@ -523,7 +552,7 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t address, uint32_t entr
             if (idx >= 0 && idx < entries)
             {
                 Entry *entry = get_entry_data(script, address, entries, idx);
-                if (entry->type == Type::image2 || entry->type == Type::image4old || entry->type == Type::image4 || entry->type == Type::image8)
+                if (entry->type == data_type::image2 || entry->type == data_type::image4old || entry->type == data_type::image4 || entry->type == data_type::image8)
                 {
                     bytes[1] = script[entry->position + 0];
                     bytes[0] = script[entry->position + 1];
@@ -533,11 +562,11 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t address, uint32_t entr
                     bytes[0] = script[entry->position + 3];
                     height = *(uint16_t *)(bytes) + 1;
 
-                    int xx = 1 + x - (width / 2);
+                    int xx = 1 + x - ((width + 1) / 2);
                     if (xx < minX)
                         minX = xx;
                     
-                    int yy = (200 - y) - (height / 2);
+                    int yy = 200 - (d + y + ((height + 1) / 2));
                     if (yy < minY)
                         minY = yy;
 
@@ -552,12 +581,16 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t address, uint32_t entr
         
         int modX = 0;
         int modY = 0;
-        if (minX < 0 || maxX >= 320 || minY < 0 || maxY >= 200)
+        if (minX < 0 || maxX >= 320)
         {
             modX = 160 - (((maxX - minX) / 2) + minX);
+        }
+
+        if (minY < 0 || maxY >= 200)
+        {
             modY = 100 - (((maxY - minY) / 2) + minY);
         }
-        
+
         for (int b = 0; b < h1; b++)
         {
             bytes[0] = script[b * 8 + location + 0];
@@ -587,69 +620,84 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t address, uint32_t entr
             if (idx >= 0 && idx < entries)
             {
                 Entry *entry = get_entry_data(script, address, entries, idx);
-                if (entry->type == Type::image2 || entry->type == Type::image4old || entry->type == Type::image4 || entry->type == Type::image8)
+
+                bytes[1] = script[entry->position + 0];
+                bytes[0] = script[entry->position + 1];
+                width = *(uint16_t *)(bytes) + 1;
+
+                bytes[1] = script[entry->position + 2];
+                bytes[0] = script[entry->position + 3];
+                height = *(uint16_t *)(bytes) + 1;
+
+                int xx = 1 + x - ((width + 1) / 2);
+                xx += modX;
+                
+                int yy = 200 - (d + y + ((height + 1) / 2));
+                yy += modY;
+                
+                int vs = 0;
+                int vf = yy;
+                int vt = height;
+                if (vf < 0)
+                {
+                    vf = 0;
+                    vt += yy;
+                    vs -= yy;
+                }
+                
+                if (vt + vf >= 200)
+                {
+                    vt = 200 - vf;
+                }
+                
+                int hs = 0;
+                int hf = xx;
+                int ht = width;
+                if (hf < 0)
+                {
+                    hf = 0;
+                    ht += xx;
+                    hs -= xx;
+                }
+                
+                if (ht + hf >= 320)
+                {
+                    ht = 320 - hf;
+                }
+                
+                uint8_t *layer = layers[d];
+                
+                if (entry->type == data_type::image2 || entry->type == data_type::image4old || entry->type == data_type::image4 || entry->type == data_type::image8)
                 {
                     int clear = 0;
-                    if (entry->type == Type::image4)
+                    if (entry->type == data_type::image4)
                     {
                         clear = script[entry->position + 5] + script[entry->position + 4];
                     }
 
-                    if (entry->type == Type::image8)
+                    if (entry->type == data_type::image8)
                     {
                         clear = script[entry->position + 5];
                     }
-
-                    bytes[1] = script[entry->position + 0];
-                    bytes[0] = script[entry->position + 1];
-                    width = *(uint16_t *)(bytes) + 1;
-
-                    bytes[1] = script[entry->position + 2];
-                    bytes[0] = script[entry->position + 3];
-                    height = *(uint16_t *)(bytes) + 1;
-
-                    int xx = 1 + x - (width / 2);
-                    xx += modX;
                     
-                    int yy = (200 - y) - (height / 2);
-                    yy += modY;
-                    
-                    uint8_t *layer = layers[d];
-                    
-                    for (int p = 0; p < height; p++)
+                    for (int h = vs; h < vs + vt; h++)
                     {
-                        uint8_t *ptr = layer + std::max(0, xx) + ((yy + p) * 320);
-                        for (int a = std::max(0, -xx); a < std::min(width, 320 -xx); a++, ptr++)
+                        for (int w = hs; w < hs + ht; w++)
                         {
-                            uint8_t color = entry->buffer.data[(cmd ? width - (a + 1) : a) + p * width];
+                            uint8_t color = entry->buffer.data[(cmd ? width - (w + 1) : w) + h * width];
                             if (color != clear)
                             {
+                                uint8_t *ptr = layer + xx + w + ((yy + h) * 320);
                                 *ptr = color;
                             }
                         }
                     }
                 }
-                else if (entry->type == Type::rectangle)
+                else if (entry->type == data_type::rectangle)
                 {
-                    bytes[1] = script[entry->position + 0];
-                    bytes[0] = script[entry->position + 1];
-                    width = *(uint16_t *)(bytes) + 1;
-
-                    bytes[1] = script[entry->position + 2];
-                    bytes[0] = script[entry->position + 3];
-                    height = *(uint16_t *)(bytes) + 1;
-
-                    int xx = 1 + x - (width / 2);
-                    xx += modX;
-                    
-                    int yy = (200 - y) - (height / 2);
-                    yy += modY;
-
-                    uint8_t *layer = layers[d];
-
-                    for (int p = 0; p < height; p++)
+                    for (int h = vs; h < vt; h++)
                     {
-                        memset(layer + std::max(0, xx) + ((yy + p) * 320), 0, std::min(width, 320 -xx));
+                        memset(layer + hf + ((yy + h) * 320), 0, ht);
                     }
                 }
             }
@@ -673,12 +721,12 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t address, uint32_t entr
             delete [] it->second;
         }
         
-        return (_entry_map[index] = new Entry(Type::draw, location, Buffer(data, 320 * 200)));
+        return (_entry_map[index] = new Entry(data_type::draw, location, Buffer(data, 320 * 200)));
     }
     else if (h0 == 0x00 && script[location + 0] == 0x00 && script[location + 1] == 0x0f && script[location + 2] == 0x00 && script[location + 3] == 0x00)// (h1 == 0x1a || h1 == 0x1b || h1 == 0x1c || h1 == 0x1d || h1 == 0x1e || h1 == 0x2C || h1 == 0x6C))
     {
         // NOTE: following 12 bytes of unknown data
-        return (_entry_map[index] = new Entry(Type::unknown12, location, Buffer()));
+        return (_entry_map[index] = new Entry(data_type::unknown12, location, Buffer()));
     }
     else if (h0 == 0x40 && h1 == 0x00)
     {
@@ -698,11 +746,11 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t address, uint32_t entr
         uint8_t *data = new uint8_t[size];
         memcpy(data, &script[location + 30], size);
 
-        return (_entry_map[index] = new Entry(Type::video, location, Buffer(data, size)));
+        return (_entry_map[index] = new Entry(data_type::video, location, Buffer(data, size)));
     }
     else if (h0 == 0x01)
     {
-        return (_entry_map[index] = new Entry(Type::rectangle, location, Buffer()));
+        return (_entry_map[index] = new Entry(data_type::rectangle, location, Buffer()));
     }
     else
     {
@@ -747,7 +795,7 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t address, uint32_t entr
                         data[to++] = b;
                     }
 
-                    return (_entry_map[index] = new Entry(Type::image4, location, Buffer(data, width * height)));
+                    return (_entry_map[index] = new Entry(data_type::image4, location, Buffer(data, width * height)));
                 }
             }
             else if ((h0 == 0x14 || h0 == 0x16) && script.size - location > width * height)
@@ -765,10 +813,10 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t address, uint32_t entr
                     uint8_t *data = new uint8_t[width * height];
                     memcpy(data, script.data + location + 4 + 2, width * height);
 
-                    return (_entry_map[index] = new Entry(Type::image8, location, Buffer(data, width * height)));
+                    return (_entry_map[index] = new Entry(data_type::image8, location, Buffer(data, width * height)));
                 }
             }
-            else if (script.size - location > width * height / 2) // if (h0 == 0x00 && h1 == 0x40)
+            else if ((h0 == 0x00 || h0 == 0x02) && script.size - location > width * height / 2)
             {
                 if (does_it_overlap(script.data, address, entries, index, location, width * height / 2) == false)
                 {
@@ -795,7 +843,7 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t address, uint32_t entr
                         data[to++] = b;
                     }
 
-                    return (_entry_map[index] = new Entry(Type::image4old, location, Buffer(data, width * height)));
+                    return (_entry_map[index] = new Entry(data_type::image4old, location, Buffer(data, width * height)));
                 }
             }
         }
@@ -840,7 +888,7 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t address, uint32_t entr
                     to+=64;
                 }
 
-                return (_entry_map[index] = new Entry(Type::image2, location, Buffer(data, width * height)));
+                return (_entry_map[index] = new Entry(data_type::image2, location, Buffer(data, width * height)));
             }
         }
     }
@@ -848,7 +896,7 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t address, uint32_t entr
     return (_entry_map[index] = new Entry());
 }
 
-void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int length)
+void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int length, uint32_t etype, vector<uint8_t *> *pal_overrides)
 {
     uint8_t bytes[4];
     uint32_t value = 0;
@@ -876,11 +924,31 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
     int h0;
     int h1;
 
-    _active_pal = _default_pal;
+    uint8_t *active_pal = _override_pal ? _override_pal : _default_pal;
     
     Buffer script(buffer, length);
     set_palette(script, address, entries);
 
+    vector<Entry *> entryList;
+    
+    for (int i = 0; i < entries; i ++)
+    {
+        entryList.push_back(NULL);
+        
+        uint32_t position = address + i * 4;
+        bytes[3] = buffer[position + 0];
+        bytes[2] = buffer[position + 1];
+        bytes[1] = buffer[position + 2];
+        bytes[0] = buffer[position + 3];
+        value = (*(uint32_t *)(bytes));
+        
+        location = position + 2 + value;
+        if (value > 0 && location < length)
+        {
+            entryList[i] = get_entry_data(script, address, entries, i);
+        }
+    }
+    
     for (int i = 0; i < entries; i ++)
     {
         uint32_t position = address + i * 4;
@@ -897,32 +965,34 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
 
             h0 = buffer[location - 2];
             h1 = buffer[location - 1];
+            
+            active_pal = pal_overrides && pal_overrides->size() > i && (*pal_overrides)[i] ? (*pal_overrides)[i] : _override_pal ? _override_pal : _default_pal;
 
-            Entry *entry = get_entry_data(script, address, entries, i);
+            Entry *entry = entryList[i];//get_entry_data(script, address, entries, i);
             switch (entry->type)
             {
-                case Type::palette4:
+                case data_type::palette4:
                     cout << "palette 16" << endl;
                     
-                    if (_list_only == false)
+                    if (_list_only == false && etype & ex_palette)
                     {
                         write_buffer(std::filesystem::path(_out_dir) / (name + " " + std::to_string(i) + ".act"), entry->buffer);
                     }
                     break;
                     
-                case Type::palette8:
+                case data_type::palette8:
                     cout << "palette 256" << endl;
 
-                    if (_list_only == false)
+                    if (_list_only == false && etype & ex_palette)
                     {
                         write_buffer(std::filesystem::path(_out_dir) / (name + " " + std::to_string(i) + ".act"), entry->buffer);
                     }
                     break;
                     
-                case Type::image2:
-                case Type::image4old:
-                case Type::image4:
-                case Type::image8: {
+                case data_type::image2:
+                case data_type::image4old:
+                case data_type::image4:
+                case data_type::image8: {
                     bytes[1] = buffer[location + 0];
                     bytes[0] = buffer[location + 1];
                     width = *(uint16_t *)(bytes) + 1;
@@ -932,7 +1002,7 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
                     height = *(uint16_t *)(bytes) + 1;
                     log_data(buffer, location - 2, 2, 0, "bitmap Id %d %d bit, %d x %d ", h1, (h0 < 13 ? 4 : 8), width, height);
 
-                    if (_list_only == false)
+                    if (_list_only == false && etype & ex_image)
                     {
                         std::filesystem::path out = _out_dir / (name + " " + std::to_string(i) + ".png");
 
@@ -941,12 +1011,12 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
                             uint8_t *data = new uint8_t[width * height * 4];
                     
                             int clear = -1;
-                            if (entry->type == Type::image4)
+                            if (entry->type == data_type::image4)
                             {
-                                clear = buffer[location + 5] + buffer[location + 4];
+                                 clear = buffer[location + 5] + buffer[location + 4];
                             }
 
-                            if (entry->type == Type::image8)
+                            if (entry->type == data_type::image8)
                             {
                                 clear = buffer[location + 5];
                             }
@@ -955,9 +1025,9 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
                             for (int x = 0; x < width * height; x++)
                             {
                                 int index = entry->buffer.data[x];
-                                data[to++] = _active_pal[index * 3 + 0];
-                                data[to++] = _active_pal[index * 3 + 1];
-                                data[to++] = _active_pal[index * 3 + 2];
+                                data[to++] = active_pal[index * 3 + 0];
+                                data[to++] = active_pal[index * 3 + 1];
+                                data[to++] = active_pal[index * 3 + 2];
                                 data[to++] = index == clear ? 0x00 : 0xff;
                             }
                     
@@ -965,12 +1035,12 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
                         }
                         else
                         {
-                            write_png_file(out.string().c_str(), width, height, PNG_COLOR_TYPE_PALETTE, 8, entry->buffer.data, _override_pal ? _override_pal : _active_pal);
+                            write_png_file(out.string().c_str(), width, height, PNG_COLOR_TYPE_PALETTE, 8, entry->buffer.data, active_pal);
                         }
                     }
                     break; }
                     
-                case Type::video: {
+                case data_type::video: {
                     bytes[3] = buffer[location + 0];
                     bytes[2] = buffer[location + 1];
                     bytes[1] = buffer[location + 2];
@@ -982,15 +1052,15 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
 
                     log_data(buffer, location - 2, 2, 4, "FLI video (%s) %d bytes [size: %d frames: %d]", fliname, size, size2, frames);
 
-                    if (_list_only == false)
+                    if (_list_only == false && etype & ex_video)
                     {
                         write_buffer(std::filesystem::path(_out_dir) / (name + " " + std::to_string(i) + ".fli"), entry->buffer);
                     }
                     break; }
                     
-                case Type::draw: {
+                case data_type::draw: {
                     log_data(buffer, location - 2, 2, 0, "%d draw instructions ", h1);
-
+                    
                     for (int b = 0; b < h1; b++)
                     {
                         bytes[0] = buffer[b * 8 + location + 0];
@@ -1019,11 +1089,62 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
                         // 134      = ???
                         // 34       = ???
                         
-                        cout << "  cmd: " << std::dec << std::setw(3) << (int)cmd << " index: " << std::dec << std::setw(3) << (int)index << " at: " << std::dec << x << " x " << std::dec << y << " order: " << std::dec << o << endl;
+                        Entry *e = entryList[index];
+                        
+                        char type[16] = "";
+                        switch (e->type)
+                        {
+                            case none:
+                                strcpy(type, "none");
+                                break;
+                            case image2:
+                                strcpy(type, "image 2 bit");
+                                break;
+                            case image4old:
+                                strcpy(type, "image 4 bit v1");
+                                break;
+                            case image4:
+                                strcpy(type, "image 4 bit v2");
+                                break;
+                            case image8:
+                                strcpy(type, "image 8 bit");
+                                break;
+                            case video:
+                                strcpy(type, "video");
+                                break;
+                            case palette4:
+                                strcpy(type, "16c palette");
+                                break;
+                            case palette8:
+                                strcpy(type, "256c palette");
+                                break;
+                            case draw:
+                                strcpy(type, "draw");
+                                break;
+                            case rectangle:
+                                strcpy(type, "rectangle");
+                                break;
+                            case unknown12:
+                                strcpy(type, "unknown 12 bit");
+                                break;
+                            case unknown:
+                                strcpy(type, "unknown");
+                                break;
+                        };
+                        
+                        bytes[1] = script[e->position + 0];
+                        bytes[0] = script[e->position + 1];
+                        width = *(uint16_t *)(bytes) + 1;
+
+                        bytes[1] = script[e->position + 2];
+                        bytes[0] = script[e->position + 3];
+                        height = *(uint16_t *)(bytes) + 1;
+                       
+                        cout << "  cmd: " << std::dec << std::setw(3) << (int)cmd << " index: " << std::dec << std::setw(3) << (int)index << " type: " << type << " x " << std::dec << x << " y " << std::dec << y  << " w " << std::dec << width << " h " << std::dec << height << " order: " << std::dec << o << endl;
                     }
                     
                     // TODO: do composition in 32 bit
-                    if (_list_only == false)
+                    if (_list_only == false && etype & ex_draw)
                     {
                         std::filesystem::path out = _out_dir / (name + " " + std::to_string(i) + " (draw cmd)" + ".png");
 
@@ -1035,9 +1156,9 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
                             for (int x = 0; x < 320 * 200; x++)
                             {
                                 int index = entry->buffer.data[x];
-                                data[to++] = _active_pal[index * 3 + 0];
-                                data[to++] = _active_pal[index * 3 + 1];
-                                data[to++] = _active_pal[index * 3 + 2];
+                                data[to++] = active_pal[index * 3 + 0];
+                                data[to++] = active_pal[index * 3 + 1];
+                                data[to++] = active_pal[index * 3 + 2];
                                 data[to++] = 0xff;
                             }
                     
@@ -1045,12 +1166,12 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
                         }
                         else
                         {
-                            write_png_file(out.string().c_str(), 320, 200, PNG_COLOR_TYPE_PALETTE, 8, entry->buffer.data, _override_pal ? _override_pal : _active_pal);
+                            write_png_file(out.string().c_str(), 320, 200, PNG_COLOR_TYPE_PALETTE, 8, entry->buffer.data, active_pal);
                         }
                     }
                     break; }
                     
-                case Type::rectangle:
+                case data_type::rectangle:
                     // NOTE: following 4 bytes describing size of black rectangle
                     bytes[1] = buffer[location + 0];
                     bytes[0] = buffer[location + 1];
@@ -1062,7 +1183,7 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
                     log_data(buffer, location - 2, 2, 4, "rectangle Id %d, %d x %d ", h1, width, height);
                     break;
 
-                case Type::unknown12:
+                case data_type::unknown12:
                     // NOTE: following 12 bytes of unknown data
                     log_data(buffer, location - 2, 2, 12, "12 bytes of unknown data ");
                     break;
@@ -1072,7 +1193,6 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
                     log_data(buffer, location - 2, 2, 8, "unknown ");
                     break;
             }
-            
         }
         else
         {
