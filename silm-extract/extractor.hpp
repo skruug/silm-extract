@@ -93,6 +93,8 @@ public:
     void extract_file(const path& file, uint32_t etype = ex_everything, vector<uint8_t *> *pal_overrides = NULL);
     void extract_buffer(const std::string& name, uint8_t *buffer, int length, uint32_t etype, vector<uint8_t *> *pal_overrides = NULL);
 
+    bool find_assets(const std::string& name, const uint8_t *buffer, int length, uint32_t& address, uint32_t& entries);
+
 private:
     
     void set_palette(Buffer& script, uint32_t address, uint32_t entries);

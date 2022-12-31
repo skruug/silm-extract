@@ -30,6 +30,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		6808EDE4295F7D570045BA8A /* wav.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = wav.hpp; sourceTree = "<group>"; };
 		6888D8B128A6DE0700678F7E /* utils.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = utils.cpp; sourceTree = "<group>"; };
 		6888D8B228A6DE0700678F7E /* utils.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = utils.hpp; sourceTree = "<group>"; };
 		6888D8B628A7045800678F7E /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
@@ -91,6 +92,7 @@
 				68C976FC28A1887B003E8C13 /* extractor.hpp */,
 				6888D8B128A6DE0700678F7E /* utils.cpp */,
 				6888D8B228A6DE0700678F7E /* utils.hpp */,
+				6808EDE4295F7D570045BA8A /* wav.hpp */,
 				68C976DE28A17D25003E8C13 /* third-party */,
 			);
 			path = "silm-extract";

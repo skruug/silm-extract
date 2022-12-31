@@ -18,6 +18,7 @@
 
 #include <png.h>
 #include "utils.hpp"
+#include "wav.hpp"
 
 extern "C"
 {
@@ -346,7 +347,18 @@ bool does_it_fit(const uint8_t *buffer, int length, int a, int e)
     return true;
 }
 
-bool find_assets(const uint8_t *buffer, int length, uint32_t& address, uint32_t& entries)
+int compare_arrays(const uint8_t *a, const uint8_t *b, int n)
+{
+    for (int i = 0; i < n; i++)
+    {
+        if (a[i] != b[i])
+            return 0;
+    }
+
+    return 1;
+}
+
+bool extractor::find_assets(const std::string& name, const uint8_t *buffer, int length, uint32_t& address, uint32_t& entries)
 {
     uint8_t bytes[4];
     uint32_t location;
@@ -356,6 +368,9 @@ bool find_assets(const uint8_t *buffer, int length, uint32_t& address, uint32_t&
     // bytes[1] = buffer[4];
     // bytes[0] = buffer[5];
     // uint16_t start = (*(uint16_t *)(bytes));
+
+    uint8_t pattern1[] = { 0x44, 0x00, 0x00, 0x00, 0x00, 0x58, 0x00, 0x00, 0x00, 0x00, 0x00, 0x58, 0x00, 0x00, 0x00, 0x00, 0x00, 0x58 };
+    uint8_t pattern2[] = { 0x44, 0x00, 0x00, 0x00, 0x58, 0x00, 0x00, 0x00, 0x00, 0x00, 0x58, 0x00, 0x00, 0x00, 0x00, 0x00, 0x58 };
 
     int a, e;
     for (int i = 8/*start*/; i < length; i ++)
@@ -382,14 +397,186 @@ bool find_assets(const uint8_t *buffer, int length, uint32_t& address, uint32_t&
                 uint32_t test = a + e * 4;
                 if (test < length && does_it_fit(buffer, length, a, e))
                 {
+                    cout << "Found address block [0x" << std::hex << std::setw(6) << std::setfill('0') << (i + 2 + i % 2) << "]";
+                    
                     address = a;
                     entries = e;
                     return true;
                 }
             }
+            
+            int location = 0;
+            if (compare_arrays(buffer + 1 + i, pattern1, sizeof(pattern1)))
+            {
+                location = 1 + i + sizeof(pattern1);
+            }
+            
+            if (compare_arrays(buffer + 1 + i, pattern2, sizeof(pattern2)))
+            {
+                location = 1 + i + sizeof(pattern2);
+            }
+            
+            if (location)
+            {
+                bytes[1] = buffer[location + 0];
+                bytes[0] = buffer[location + 1];
+                e = (*(uint16_t *)(bytes));
+                
+                location = location + 2;
+                bytes[3] = buffer[location + 0];
+                bytes[2] = buffer[location + 1];
+                bytes[1] = buffer[location + 2];
+                bytes[0] = buffer[location + 3];
+                a = (*(uint32_t *)(bytes));
+                
+                cout << "Found " << std::dec << e << " PCM sound samples (" << a << ")" << endl;
+                
+                location = location + 4;
+                for (int idx = location; idx < length; idx ++)
+                {
+                    if (buffer[idx] != 0)
+                    {
+                        // address
+                        
+                        location = idx - (2 + (idx % 2));
+                        
+                        bool reset = false;
+                        
+                        for (int s = 0; s < e; s++)
+                        {
+                            bytes[3] = buffer[location + 0];
+                            bytes[2] = buffer[location + 1];
+                            bytes[1] = buffer[location + 2];
+                            bytes[0] = buffer[location + 3];
+                            a = (*(uint32_t *)(bytes));
+
+                            uint32_t test = (location + a + 8);
+                            if (test >= length)
+                            {
+                                // cout << "   sample doesn't fit!" << endl;
+                                reset = true;
+                                break;
+                            }
+                            
+                            int typeA = buffer[location + a + 0];
+                            int typeB = buffer[location + a + 1];
+
+                            int typeC = buffer[location + a + 4];
+                            int typeD = buffer[location + a + 5];
+
+                            bytes[3] = buffer[location + a + 2 + 0];
+                            bytes[2] = buffer[location + a + 2 + 1];
+                            bytes[1] = buffer[location + a + 2 + 2];
+                            bytes[0] = buffer[location + a + 2 + 3];
+                            uint32_t len = (*(uint32_t *)(bytes)) - 1;
+
+                            cout << "   sample " << std::dec << s + 1 << " [0x" << std::hex << std::setw(6) << std::setfill('0') << a + location << "] data " << std::dec << std::setw(2) << std::setfill('0') << typeA << ", " <<  std::dec << std::setw(2) << std::setfill('0') << typeB << ", " << std::dec << std::setw(2) << std::setfill('0') << typeC << ", " <<  std::dec << std::setw(2) << std::setfill('0') << typeD << " length " << std::dec << len << " b" << endl;
+                            
+                            if ((uint32_t)(location + a + len) >= length || len >= length)
+                            {
+                                // cout << "   sample doesn't fit!" << endl;
+                                reset = true;
+                                break;
+                            }
+
+                            // save
+                            
+                            if (typeA == 0)
+                            {
+                                // patern
+
+                                std::filesystem::path filename = std::filesystem::path(_out_dir) / (name + " " + std::to_string(s) + ".pattern");
+                                
+                                FILE *fp = fopen(filename.string().c_str(), "wb");
+                                if (!fp)
+                                    abort();
+                                
+                                uint8_t sample[len];
+                                memcpy(sample, buffer + location + a + 2 + 4, len);
+                                if (fwrite(sample, len, 1, fp) != 1)
+                                    abort();
+                                
+                                fclose(fp);
+                            }
+                            else
+                            {
+                                // sample
+                                
+                                std::filesystem::path filename = std::filesystem::path(_out_dir) / (name + " " + std::to_string(s) + ".wav");
+                                
+                                FILE *fp = fopen(filename.string().c_str(), "wb");
+                                if (!fp)
+                                    abort();
+                                
+                                if (typeB < 3 || typeB > 23)
+                                {
+                                    typeB = 8;
+                                }
+                                
+                                int res = write_wav_header(fp, typeB * 1000, len);
+                                if (res)
+                                    abort();
+                                
+                                uint8_t sample[len];
+                                memcpy(sample, buffer + location + a + 2 + 4, len);
+                                
+                                // try to find out if sample is signed or unsigned
+                                
+                                int smp_signed = 0;
+                                int smp_unsigned = 0;
+
+                                for (int b = 0; b < len; b++)
+                                {
+                                    uint8_t tui = sample[b];
+                                    uint8_t tsi = sample[b] ^ 0x80;
+
+                                    if (tui == tsi)
+                                    {
+                                        
+                                    }
+                                    else if (tui > tsi)
+                                    {
+                                        smp_unsigned++;
+                                    }
+                                    else
+                                    {
+                                        smp_signed++;
+                                    }
+                                }
+
+                                if (smp_unsigned > smp_signed)
+                                {
+                                    // convert from signed to unsigned PCM
+                                    // NOTE: wav doesn't support signed 8 bit sample
+
+                                    for (int b = 0; b < len; b++)
+                                    {
+                                        sample[b]  ^= 0x80;
+                                    }
+                                }
+                                    
+                                if (fwrite(sample, len, 1, fp) != 1)
+                                    abort();
+
+                                fclose(fp);
+                            }
+                            
+                            location += 4;
+                        }
+                        
+                        if (reset == false)
+                            break;
+                        
+                        reset = false;
+                    }
+                }
+                
+                return false;
+            }
         }
     }
 
+    cout << "Can't found address block";
     return false;
 }
 
@@ -906,13 +1093,12 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
 
     // find adresses for all assets in file
     
-    if (find_assets(buffer, length, address, entries))
+    if (find_assets(name, buffer, length, address, entries))
     {
-        cout << "Found " << std::dec << entries << " assets in " << name << endl;
+        cout << " containing " << std::dec << entries << " assets" << endl;
     }
     else
     {
-        cout << name << ": No assets to found!" << endl;
         return;
     }
     
