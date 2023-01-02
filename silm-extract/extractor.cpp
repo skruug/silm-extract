@@ -271,30 +271,88 @@ void extractor::write_png_file(const char *filename, int width, int height, png_
 
 int asset_size(const uint8_t *buffer)
 {
-    if (buffer[0] == 0xfe)
+    int h0 = buffer[0];
+    int h1 = buffer[1];
+
+    uint8_t bytes[4];
+
+    switch (h0)
     {
-        return buffer[1] == 0x00 ? 32 : (buffer[1] + 1) * 3;
-    }
-    else if (buffer[0] == 0xff)
-    {
-        return buffer[1] * 8;
-    }
-    else if ((buffer[0] == 0x00 && buffer[1] == 0x2C) || (buffer[0] == 0x00 && buffer[1] == 0x6C))
-    {
-        return 12;
-    }
-    else if (buffer[0] == 0x40 && buffer[1] == 0x00)
-    {
-        uint8_t bytes[4];
-        bytes[3] = buffer[2];
-        bytes[2] = buffer[3];
-        bytes[1] = buffer[4];
-        bytes[0] = buffer[5];
-        return (*(uint32_t *)(bytes));
-    }
-    else if (buffer[0] == 0x01)
-    {
-        return 4;
+        case 0x01:
+        {
+            return 4 * 2;
+        }
+        case 0x00:
+        case 0x02:
+        {
+            bytes[1] = buffer[2 + 0];
+            bytes[0] = buffer[2 + 1];
+            int width = *(uint16_t *)(bytes) + 1;
+
+            bytes[1] = buffer[2 + 2];
+            bytes[0] = buffer[2 + 3];
+            int height = *(uint16_t *)(bytes) + 1;
+
+            return (width / 2) * height;;
+        }
+        case 0x10:
+        case 0x12:
+        {
+            bytes[1] = buffer[2 + 0];
+            bytes[0] = buffer[2 + 1];
+            int width = *(uint16_t *)(bytes) + 1;
+
+            bytes[1] = buffer[2 + 2];
+            bytes[0] = buffer[2 + 3];
+            int height = *(uint16_t *)(bytes) + 1;
+
+            return (width / 2) * height;
+        }
+        case 0x14:
+        case 0x16:
+        {
+            bytes[1] = buffer[2 + 0];
+            bytes[0] = buffer[2 + 1];
+            int width = *(uint16_t *)(bytes) + 1;
+
+            bytes[1] = buffer[2 + 2];
+            bytes[0] = buffer[2 + 3];
+            int height = *(uint16_t *)(bytes) + 1;
+
+            return width * height;
+        }
+        case 0x40:
+        {
+            bytes[3] = buffer[2 + 0];
+            bytes[2] = buffer[2 + 1];
+            bytes[1] = buffer[2 + 2];
+            bytes[0] = buffer[2 + 3];
+            return (*(uint32_t *)(bytes)) - 1;
+        }
+        case 0xfe:
+        {
+            return h1 == 0x00 ? 32 : (h1 + 1) * 3;
+        }
+        case 0xff:
+        {
+            return h1 * 8;
+        }
+        case 0x100:
+        case 0x101:
+        case 0x102:
+        case 0x104:
+        {
+            bytes[3] = buffer[2 + 0];
+            bytes[2] = buffer[2 + 1];
+            bytes[1] = buffer[2 + 2];
+            bytes[0] = buffer[2 + 3];
+            return (*(uint32_t *)(bytes)) - 1;
+        }
+
+        default:
+        {
+            break;
+        }
     }
 
     return 0;
@@ -313,11 +371,22 @@ bool does_it_overlap(const uint8_t *buffer, int address, int entries, int skip_e
             bytes[1] = buffer[position + 2];
             bytes[0] = buffer[position + 3];
 
-            int eloc = position + 2 + (*(uint32_t *)(bytes));
-            int esize = asset_size(buffer + eloc - 2);
+            uint32_t eloc = position + 2 + (*(uint32_t *)(bytes));
+            uint32_t esize = asset_size(buffer + eloc - 2);
             if (eloc + esize > location && eloc < location + length)
             {
-                return true;
+                if (buffer[eloc - 2] == 0x00 || buffer[eloc - 2] == 0x02)
+                {
+                    esize /= 2;
+                    if (eloc + esize > location && eloc < location + length)
+                    {
+                        return true;
+                    }
+                }
+                else
+                {
+                    return true;
+                }
             }
         }
     }
@@ -358,10 +427,12 @@ int compare_arrays(const uint8_t *a, const uint8_t *b, int n)
     return 1;
 }
 
-bool extractor::find_assets(const std::string& name, const uint8_t *buffer, int length, uint32_t& address, uint32_t& entries)
+bool extractor::find_assets(const uint8_t *buffer, int length, uint32_t& address, uint32_t& entries, uint32_t& mod)
 {
     uint8_t bytes[4];
     uint32_t location;
+    
+    mod = 0;
 
     // NOTE: looks like header is different using amiga decruncher
     // for the moment do not use!
@@ -422,23 +493,14 @@ bool extractor::find_assets(const std::string& name, const uint8_t *buffer, int 
                 bytes[0] = buffer[location + 1];
                 e = (*(uint16_t *)(bytes));
                 
-                location = location + 2;
-                bytes[3] = buffer[location + 0];
-                bytes[2] = buffer[location + 1];
-                bytes[1] = buffer[location + 2];
-                bytes[0] = buffer[location + 3];
-                a = (*(uint32_t *)(bytes));
-                
-                cout << "Found " << std::dec << e << " PCM sound samples (" << a << ")" << endl;
-                
-                location = location + 4;
+                location = location + 6;
                 for (int idx = location; idx < length; idx ++)
                 {
                     if (buffer[idx] != 0)
                     {
                         // address
                         
-                        location = idx - (2 + (idx % 2));
+                        address = location = idx - (2 + (idx % 2));
                         
                         bool reset = false;
                         
@@ -453,125 +515,37 @@ bool extractor::find_assets(const std::string& name, const uint8_t *buffer, int 
                             uint32_t test = (location + a + 8);
                             if (test >= length)
                             {
-                                // cout << "   sample doesn't fit!" << endl;
                                 reset = true;
                                 break;
                             }
-                            
-                            int typeA = buffer[location + a + 0];
-                            int typeB = buffer[location + a + 1];
-
-                            int typeC = buffer[location + a + 4];
-                            int typeD = buffer[location + a + 5];
 
                             bytes[3] = buffer[location + a + 2 + 0];
                             bytes[2] = buffer[location + a + 2 + 1];
                             bytes[1] = buffer[location + a + 2 + 2];
                             bytes[0] = buffer[location + a + 2 + 3];
                             uint32_t len = (*(uint32_t *)(bytes)) - 1;
-
-                            cout << "   sample " << std::dec << s + 1 << " [0x" << std::hex << std::setw(6) << std::setfill('0') << a + location << "] data " << std::dec << std::setw(2) << std::setfill('0') << typeA << ", " <<  std::dec << std::setw(2) << std::setfill('0') << typeB << ", " << std::dec << std::setw(2) << std::setfill('0') << typeC << ", " <<  std::dec << std::setw(2) << std::setfill('0') << typeD << " length " << std::dec << len << " b" << endl;
                             
                             if ((uint32_t)(location + a + len) >= length || len >= length)
                             {
-                                // cout << "   sample doesn't fit!" << endl;
                                 reset = true;
                                 break;
-                            }
-
-                            // save
-                            
-                            if (typeA == 0)
-                            {
-                                // patern
-
-                                std::filesystem::path filename = std::filesystem::path(_out_dir) / (name + " " + std::to_string(s) + ".pattern");
-                                
-                                FILE *fp = fopen(filename.string().c_str(), "wb");
-                                if (!fp)
-                                    abort();
-                                
-                                uint8_t sample[len];
-                                memcpy(sample, buffer + location + a + 2 + 4, len);
-                                if (fwrite(sample, len, 1, fp) != 1)
-                                    abort();
-                                
-                                fclose(fp);
-                            }
-                            else
-                            {
-                                // sample
-                                
-                                std::filesystem::path filename = std::filesystem::path(_out_dir) / (name + " " + std::to_string(s) + ".wav");
-                                
-                                FILE *fp = fopen(filename.string().c_str(), "wb");
-                                if (!fp)
-                                    abort();
-                                
-                                if (typeB < 3 || typeB > 23)
-                                {
-                                    typeB = 8;
-                                }
-                                
-                                int res = write_wav_header(fp, typeB * 1000, len);
-                                if (res)
-                                    abort();
-                                
-                                uint8_t sample[len];
-                                memcpy(sample, buffer + location + a + 2 + 4, len);
-                                
-                                // try to find out if sample is signed or unsigned
-                                
-                                int smp_signed = 0;
-                                int smp_unsigned = 0;
-
-                                for (int b = 0; b < len; b++)
-                                {
-                                    uint8_t tui = sample[b];
-                                    uint8_t tsi = sample[b] ^ 0x80;
-
-                                    if (tui == tsi)
-                                    {
-                                        
-                                    }
-                                    else if (tui > tsi)
-                                    {
-                                        smp_unsigned++;
-                                    }
-                                    else
-                                    {
-                                        smp_signed++;
-                                    }
-                                }
-
-                                if (smp_unsigned > smp_signed)
-                                {
-                                    // convert from signed to unsigned PCM
-                                    // NOTE: wav doesn't support signed 8 bit sample
-
-                                    for (int b = 0; b < len; b++)
-                                    {
-                                        sample[b]  ^= 0x80;
-                                    }
-                                }
-                                    
-                                if (fwrite(sample, len, 1, fp) != 1)
-                                    abort();
-
-                                fclose(fp);
                             }
                             
                             location += 4;
                         }
                         
                         if (reset == false)
-                            break;
+                        {
+                            // sucess
+                            
+                            mod = 0x100;
+                            entries = e;
+                            return true;
+                        }
                         
                         reset = false;
                     }
                 }
-                
-                return false;
             }
         }
     }
@@ -579,8 +553,6 @@ bool extractor::find_assets(const std::string& name, const uint8_t *buffer, int 
     cout << "Can't found address block";
     return false;
 }
-
-// 0xbe, ctopalet ( 2b entry index 2b duration ? )
 
 void extractor::set_palette(Buffer& script, uint32_t address, uint32_t entries)
 {
@@ -602,30 +574,26 @@ void extractor::set_palette(Buffer& script, uint32_t address, uint32_t entries)
 
         h0 = script[location - 2];
         h1 = script[location - 1];
+        
+        // NOTE: we are interested in full palette only
+        
         if (h0 == 0xfe && h1 == 0x00)
         {
-            get_entry_data(script, address, entries, i);
-            return;
-        }
-        else if (h0 == 0xfe && h1 == 0x0f)
-        {
-            get_entry_data(script, address, entries, i);
-            return;
-        }
-        else if (h0 == 0xfe && h1 == 0x1f)
-        {
-            get_entry_data(script, address, entries, i);
+            get_entry_data(script, 0, address, entries, i);
             return;
         }
         else if (h0 == 0xfe && h1 == 0xff)
         {
-            get_entry_data(script, address, entries, i);
+            get_entry_data(script, 0, address, entries, i);
             return;
         }
     }
 }
 
-Entry *extractor::get_entry_data(Buffer& script, uint32_t address, uint32_t entries, uint32_t index)
+const int composite_width = 320;
+const int composite_height = 200;
+
+Entry *extractor::get_entry_data(Buffer& script, uint32_t mod, uint32_t address, uint32_t entries, uint32_t index)
 {
     if (_entry_map[index])
     {
@@ -634,8 +602,6 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t address, uint32_t entr
     
     uint8_t bytes[4];
 
-    int width;
-    int height;
     int h0;
     int h1;
 
@@ -648,439 +614,478 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t address, uint32_t entr
 
     uint32_t location = position + 2 + value;
 
-    h0 = script[location - 2];
+    h0 = mod + script[location - 2];
     h1 = script[location - 1];
-    if (h0 == 0xfe)
+    
+    switch (h0)
     {
-        uint8_t *palette_data = new uint8_t[256 * 3];
-        memcpy(palette_data, _default_pal, 256 * 3);
-
-        int to = 0;
-
-        if (h1 == 0x00)
+        case 0x01:
         {
-            for (int f = 0; f < 16; f++)
-            {
-                uint8_t r = script[location + f * 2 + 0];
-                r = (r & 0b00000111) << 5;
-                uint8_t g = script[location + f * 2 + 1];
-                g = (g >> 4) << 5;
-                uint8_t b = script[location + f * 2 + 1];
-                b = (b & 0b00000111) << 5;
-                
-                palette_data[to++] = r;
-                palette_data[to++] = g;
-                palette_data[to++] = b;
-            }
+            return (_entry_map[index] = new Entry(data_type::rectangle, location, Buffer()));
+        }
+        case 0x00:
+        case 0x02:
+        {
+            bytes[1] = script[location + 0];
+            bytes[0] = script[location + 1];
+            int width = *(uint16_t *)(bytes) + 1;
+
+            bytes[1] = script[location + 2];
+            bytes[0] = script[location + 3];
+            int height = *(uint16_t *)(bytes) + 1;
             
-            _active_pal = palette_data;
-            return (_entry_map[index] = new Entry(data_type::palette4, location, Buffer(palette_data, 256 * 3)));
-        }
-        else
-        {
-            for (int f = 0; f < h1 + 1; f++)
+            int at = location + 4;
+            int to = 0;
+
+            if (does_it_overlap(script.data, address, entries, index, location, (width / 2) * height) == false && at + (width / 2) * height < script.size)
             {
-                palette_data[to++] = script[2 + location + (f * 3) + 0];
-                palette_data[to++] = script[2 + location + (f * 3) + 1];
-                palette_data[to++] = script[2 + location + (f * 3) + 2];
-            }
-            
-            _active_pal = palette_data;
-            return (_entry_map[index] = new Entry(data_type::palette8, location, Buffer(palette_data, 256 * 3)));
-        }
-    }
-    else if (h0 == 0xff && h1 == 0)
-    {
-        uint8_t *data = new uint8_t[320 * 200];
-        memset(data, 0, 320 * 200);
-
-        // clear screen?
-        return (_entry_map[index] = new Entry(data_type::draw, location, Buffer(data, 320 * 200)));
-    }
-    else if (h0 == 0xff && h1 > 0)
-    {
-        // draw call
-        // uint8    command (0 normal, )
-        // uint8    entry
-        // uint16   x origin (from left side of screen to bitmap center)
-        // uint16   draw order
-        // uint16   y origin (from bottom side of screen to bitmap center)
-        
-        uint8_t *data = new uint8_t[320 * 200];
-        memset(data, 0, 320 * 200);
-        
-        std::map<int, uint8_t *> layers;
-
-        // HACK: we don't know where on screen script wants to draw
-        // so, to actually display anything, check if positions fit screen, if not center it.
-        
-        int minX = 320;
-        int minY = 200;
-        int maxX = 0;
-        int maxY = 0;
-        
-        for (int b = 0; b < h1; b++)
-        {
-            bytes[0] = script[b * 8 + location + 1];
-            uint8_t idx = (*(uint8_t *)(bytes));
-
-            bytes[1] = script[b * 8 + location + 2];
-            bytes[0] = script[b * 8 + location + 3];
-            int16_t x = (*(int16_t *)(bytes));
-
-            bytes[1] = script[b * 8 + location + 4];
-            bytes[0] = script[b * 8 + location + 5];
-            int16_t d = (*(int16_t *)(bytes));
-
-            bytes[1] = script[b * 8 + location + 6];
-            bytes[0] = script[b * 8 + location + 7];
-            int16_t y = (*(int16_t *)(bytes));
-            
-            if (idx >= 0 && idx < entries)
-            {
-                Entry *entry = get_entry_data(script, address, entries, idx);
-                if (entry->type == data_type::image2 || entry->type == data_type::image4old || entry->type == data_type::image4 || entry->type == data_type::image8)
-                {
-                    bytes[1] = script[entry->position + 0];
-                    bytes[0] = script[entry->position + 1];
-                    width = *(uint16_t *)(bytes) + 1;
-
-                    bytes[1] = script[entry->position + 2];
-                    bytes[0] = script[entry->position + 3];
-                    height = *(uint16_t *)(bytes) + 1;
-
-                    int xx = 1 + x - ((width + 1) / 2);
-                    if (xx < minX)
-                        minX = xx;
-                    
-                    int yy = 200 - (d + y + ((height + 1) / 2));
-                    if (yy < minY)
-                        minY = yy;
-
-                    if (xx + width > maxX)
-                        maxX = xx + width;
-                    
-                    if (yy + height > maxY)
-                        maxY = yy + height;
-                }
-            }
-        }
-        
-        int modX = 0;
-        int modY = 0;
-        if (minX < 0 || maxX >= 320)
-        {
-            modX = 160 - (((maxX - minX) / 2) + minX);
-        }
-
-        if (minY < 0 || maxY >= 200)
-        {
-            modY = 100 - (((maxY - minY) / 2) + minY);
-        }
-
-        for (int b = 0; b < h1; b++)
-        {
-            bytes[0] = script[b * 8 + location + 0];
-            uint8_t cmd = (*(uint8_t *)(bytes));
-
-            bytes[0] = script[b * 8 + location + 1];
-            uint8_t idx = (*(uint8_t *)(bytes));
-
-            bytes[1] = script[b * 8 + location + 2];
-            bytes[0] = script[b * 8 + location + 3];
-            int16_t x = (*(int16_t *)(bytes));
-
-            bytes[1] = script[b * 8 + location + 4];
-            bytes[0] = script[b * 8 + location + 5];
-            int16_t d = (*(int16_t *)(bytes));
-
-            bytes[1] = script[b * 8 + location + 6];
-            bytes[0] = script[b * 8 + location + 7];
-            int16_t y = (*(int16_t *)(bytes));
-            
-            if (layers[d] == NULL)
-            {
-                layers[d] = new uint8_t[320 * 200];
-                memset(layers[d], 0, 320 * 200);
-            }
-            
-            if (idx >= 0 && idx < entries)
-            {
-                Entry *entry = get_entry_data(script, address, entries, idx);
-
-                bytes[1] = script[entry->position + 0];
-                bytes[0] = script[entry->position + 1];
-                width = *(uint16_t *)(bytes) + 1;
-
-                bytes[1] = script[entry->position + 2];
-                bytes[0] = script[entry->position + 3];
-                height = *(uint16_t *)(bytes) + 1;
-
-                int xx = 1 + x - ((width + 1) / 2);
-                xx += modX;
-                
-                int yy = 200 - (d + y + ((height + 1) / 2));
-                yy += modY;
-                
-                int vs = 0;
-                int vf = yy;
-                int vt = height;
-                if (vf < 0)
-                {
-                    vf = 0;
-                    vt += yy;
-                    vs -= yy;
-                }
-                
-                if (vt + vf >= 200)
-                {
-                    vt = 200 - vf;
-                }
-                
-                int hs = 0;
-                int hf = xx;
-                int ht = width;
-                if (hf < 0)
-                {
-                    hf = 0;
-                    ht += xx;
-                    hs -= xx;
-                }
-                
-                if (ht + hf >= 320)
-                {
-                    ht = 320 - hf;
-                }
-                
-                uint8_t *layer = layers[d];
-                
-                if (entry->type == data_type::image2 || entry->type == data_type::image4old || entry->type == data_type::image4 || entry->type == data_type::image8)
-                {
-                    int clear = 0;
-                    if (entry->type == data_type::image4)
-                    {
-                        clear = script[entry->position + 5] + script[entry->position + 4];
-                    }
-
-                    if (entry->type == data_type::image8)
-                    {
-                        clear = script[entry->position + 5];
-                    }
-                    
-                    for (int h = vs; h < vs + vt; h++)
-                    {
-                        for (int w = hs; w < hs + ht; w++)
-                        {
-                            uint8_t color = entry->buffer.data[(cmd ? width - (w + 1) : w) + h * width];
-                            if (color != clear)
-                            {
-                                uint8_t *ptr = layer + xx + w + ((yy + h) * 320);
-                                *ptr = color;
-                            }
-                        }
-                    }
-                }
-                else if (entry->type == data_type::rectangle)
-                {
-                    for (int h = vs; h < vt; h++)
-                    {
-                        memset(layer + hf + ((yy + h) * 320), 0, ht);
-                    }
-                }
-            }
-        }
-        
-        for (auto it = layers.rbegin(); it != layers.rend(); it++)
-        {
-            for (int p = 0; p < 200; p++)
-            {
-                uint8_t *ptr = data + p * 320;
-                for (int a = 0; a < 320; a++, ptr++)
-                {
-                    uint8_t color = it->second[a + p * 320];
-                    if (color)
-                    {
-                        *ptr = color;
-                    }
-                }
-            }
-            
-            delete [] it->second;
-        }
-        
-        return (_entry_map[index] = new Entry(data_type::draw, location, Buffer(data, 320 * 200)));
-    }
-    else if (h0 == 0x00 && script[location + 0] == 0x00 && script[location + 1] == 0x0f && script[location + 2] == 0x00 && script[location + 3] == 0x00)// (h1 == 0x1a || h1 == 0x1b || h1 == 0x1c || h1 == 0x1d || h1 == 0x1e || h1 == 0x2C || h1 == 0x6C))
-    {
-        // NOTE: following 12 bytes of unknown data
-        return (_entry_map[index] = new Entry(data_type::unknown12, location, Buffer()));
-    }
-    else if (h0 == 0x40 && h1 == 0x00)
-    {
-        bytes[3] = script[location + 0];
-        bytes[2] = script[location + 1];
-        bytes[1] = script[location + 2];
-        bytes[0] = script[location + 3];
-        uint32_t size = (*(uint32_t *)(bytes));
-        char *fliname = (char *)&script[location + 4];
-        cout << "FLI video (" << fliname << ") " << std::dec << size << " bytes [";
-
-        size = (*(uint32_t *)(&script[location + 30]));
-        uint16_t frames = (*(uint16_t *)(&script[location + 36]));
-
-        cout << "size: " << std::dec << size << " frames: "  << std::dec << frames << "]" << endl;
-        
-        uint8_t *data = new uint8_t[size];
-        memcpy(data, &script[location + 30], size);
-
-        return (_entry_map[index] = new Entry(data_type::video, location, Buffer(data, size)));
-    }
-    else if (h0 == 0x01)
-    {
-        return (_entry_map[index] = new Entry(data_type::rectangle, location, Buffer()));
-    }
-    else
-    {
-        bytes[1] = script[location + 0];
-        bytes[0] = script[location + 1];
-
-        width = *(uint16_t *)(bytes) + 1;
-
-        bytes[1] = script[location + 2];
-        bytes[0] = script[location + 3];
-
-        height = *(uint16_t *)(bytes) + 1;
-
-        if (width > 1 && height > 1 && width <= 320 && height <= 200)
-        {
-            if ((h0 == 0x10 || h0 == 0x12) && script.size - location > width * height / 2)
-            {
-                if (does_it_overlap(script.data, address, entries, index, location, width * height / 2) == false)
-                {
-                    bytes[1] = script[location + 0];
-                    bytes[0] = script[location + 1];
-                    width = *(uint16_t *)(bytes) + 1;
-
-                    bytes[1] = script[location + 2];
-                    bytes[0] = script[location + 3];
-                    height = *(uint16_t *)(bytes) + 1;
-
-                    uint8_t *data = new uint8_t[width * height];
-
-                    // int clear = script[location + 5];
-                    int palIndex = script[location + 4];
-                    
-                    int at = location + 4 + 2;
-                    int to = 0;
-                    for (int x = 0; x < (width / 2) * height; x++, at++)
-                    {
-                        uint8_t r = script[at];
-                        uint8_t a = palIndex + ((r & 0b11110000) >> 4);
-                        uint8_t b = palIndex + (r & 0b00001111);
-
-                        data[to++] = a;
-                        data[to++] = b;
-                    }
-
-                    return (_entry_map[index] = new Entry(data_type::image4, location, Buffer(data, width * height)));
-                }
-            }
-            else if ((h0 == 0x14 || h0 == 0x16) && script.size - location > width * height)
-            {
-                if (does_it_overlap(script.data, address, entries, index, location, width * height) == false)
-                {
-                    bytes[1] = script[location + 0];
-                    bytes[0] = script[location + 1];
-                    width = *(uint16_t *)(bytes) + 1;
-
-                    bytes[1] = script[location + 2];
-                    bytes[0] = script[location + 3];
-                    height = *(uint16_t *)(bytes) + 1;
-
-                    uint8_t *data = new uint8_t[width * height];
-                    memcpy(data, script.data + location + 4 + 2, width * height);
-
-                    return (_entry_map[index] = new Entry(data_type::image8, location, Buffer(data, width * height)));
-                }
-            }
-            else if ((h0 == 0x00 || h0 == 0x02) && script.size - location > width * height / 2)
-            {
-                if (does_it_overlap(script.data, address, entries, index, location, width * height / 2) == false)
-                {
-                    bytes[1] = script[location + 0];
-                    bytes[0] = script[location + 1];
-                    width = *(uint16_t *)(bytes) + 1;
-
-                    bytes[1] = script[location + 2];
-                    bytes[0] = script[location + 3];
-                    height = *(uint16_t *)(bytes) + 1;
-
-                    // NOTE: use correct palette for correct image
-                    uint8_t *data = new uint8_t[width * height];
-
-                    int at = location + 4;
-                    int to = 0;
-                    for (int x = 0; x < (width / 2) * height; x++, at++)
-                    {
-                        uint8_t r = script[at];
-                        uint8_t a = ((r & 0b11110000) >> 4);
-                        uint8_t b = (r & 0b00001111);
-
-                        data[to++] = a;
-                        data[to++] = b;
-                    }
-
-                    return (_entry_map[index] = new Entry(data_type::image4old, location, Buffer(data, width * height)));
-                }
-            }
-        }
-        
-        if ((h0 == 0x00 || h0 == 0x02) && width > 1 && height > 1 && width <= 640 && height <= 400)
-        {
-            if (does_it_overlap(script.data, address, entries, index, location, (width / 4) * height) == false)
-            {
-                bytes[1] = script[location + 0];
-                bytes[0] = script[location + 1];
-
-                width = *(uint16_t *)(bytes) + 1;
-
-                bytes[1] = script[location + 2];
-                bytes[0] = script[location + 3];
-
-                height = *(uint16_t *)(bytes) + 1;
-                
                 uint8_t *data = new uint8_t[width * height];
 
-                int at = location + 4;
-                int to = 0;
+                for (int x = 0; x < (width / 2) * height; x++, at++)
+                {
+                    uint8_t r = script[at];
+                    uint8_t a = ((r & 0b11110000) >> 4);
+                    uint8_t b = (r & 0b00001111);
 
-                uint8_t colors[16];
+                    data[to++] = a;
+                    data[to++] = b;
+                }
 
-                for (int x = 0; x < width * height; x+=16)
+                return (_entry_map[index] = new Entry(data_type::image4ST, location, Buffer(data, width * height)));
+            }
+            else if (does_it_overlap(script.data, address, entries, index, location, (width / 4) * height) == false && at + (width / 4) * height < script.size)
+            {
+                uint8_t *data = new uint8_t[width * height];
+                uint8_t pixels[16];
+
+                for (int b = 0; b < width * height; b+=16)
                 {
                     for (int c = 0; c < 8; c++)
                     {
                         uint8_t rot = (7 - c);
                         uint8_t mask = 1 << rot;
-                        colors[0 + c] = (((script[at + 0] & mask) >> rot) << 7) | ((script[at + 2] & mask) >> rot);
-                        colors[8 + c] = (((script[at + 1] & mask) >> rot) << 7) | ((script[at + 3] & mask) >> rot);
+                        pixels[0 + c] = (((script[at + 0] & mask) >> rot) << 7) | ((script[at + 2] & mask) >> rot);
+                        pixels[8 + c] = (((script[at + 1] & mask) >> rot) << 7) | ((script[at + 3] & mask) >> rot);
                     }
-                    
-                    for (int d = 0; d < 64; d++)
+
+                    for (int d = 0; d < 16; d++)
                     {
-                        data[to + d] = colors[d];
+                        data[to + d] = pixels[d];
                     }
 
                     at+=4;
-                    to+=64;
+                    to+=16;
                 }
 
                 return (_entry_map[index] = new Entry(data_type::image2, location, Buffer(data, width * height)));
             }
+            
+            break;
+        }
+        case 0x10:
+        case 0x12:
+        {
+            bytes[1] = script[location + 0];
+            bytes[0] = script[location + 1];
+            int width = *(uint16_t *)(bytes) + 1;
+
+            bytes[1] = script[location + 2];
+            bytes[0] = script[location + 3];
+            int height = *(uint16_t *)(bytes) + 1;
+
+            uint8_t *data = new uint8_t[width * height];
+
+            int at = location + 4 + 2;
+            int to = 0;
+
+            // int clear = script[location + 5];
+            int palIndex = script[location + 4];
+            
+            for (int x = 0; x < (width / 2) * height; x++, at++)
+            {
+                uint8_t r = script[at];
+                uint8_t a = palIndex + ((r & 0b11110000) >> 4);
+                uint8_t b = palIndex + (r & 0b00001111);
+                
+                data[to++] = a;
+                data[to++] = b;
+            }
+            
+            return (_entry_map[index] = new Entry(data_type::image4, location, Buffer(data, width * height)));
+        }
+        case 0x14:
+        case 0x16:
+        {
+            bytes[1] = script[location + 0];
+            bytes[0] = script[location + 1];
+            int width = *(uint16_t *)(bytes) + 1;
+
+            bytes[1] = script[location + 2];
+            bytes[0] = script[location + 3];
+            int height = *(uint16_t *)(bytes) + 1;
+
+            uint8_t *data = new uint8_t[width * height];
+            memcpy(data, script.data + location + 4 + 2, width * height);
+                
+            return (_entry_map[index] = new Entry(data_type::image8, location, Buffer(data, width * height)));
+        }
+        case 0x40:
+        {
+            bytes[3] = script[location + 0];
+            bytes[2] = script[location + 1];
+            bytes[1] = script[location + 2];
+            bytes[0] = script[location + 3];
+            uint32_t size = (*(uint32_t *)(bytes));
+            char *fliname = (char *)&script[location + 4];
+            cout << "FLI video (" << fliname << ") " << std::dec << size << " bytes [";
+
+            size = (*(uint32_t *)(&script[location + 30]));
+            uint16_t frames = (*(uint16_t *)(&script[location + 36]));
+
+            cout << "size: " << std::dec << size << " frames: "  << std::dec << frames << "]" << endl;
+            
+            uint8_t *data = new uint8_t[size];
+            memcpy(data, &script[location + 30], size);
+
+            return (_entry_map[index] = new Entry(data_type::video, location, Buffer(data, size)));
+        }
+        case 0xfe:
+        {
+            uint8_t *palette_data = new uint8_t[256 * 3];
+            memcpy(palette_data, _default_pal, 256 * 3);
+
+            int to = 0;
+
+            if (h1 == 0x00)
+            {
+                for (int f = 0; f < 16; f++)
+                {
+                    uint8_t r = script[location + f * 2 + 0];
+                    r = (r & 0b00000111) << 5;
+                    uint8_t g = script[location + f * 2 + 1];
+                    g = (g >> 4) << 5;
+                    uint8_t b = script[location + f * 2 + 1];
+                    b = (b & 0b00000111) << 5;
+                    
+                    palette_data[to++] = r;
+                    palette_data[to++] = g;
+                    palette_data[to++] = b;
+                }
+                
+                _active_pal = palette_data;
+                return (_entry_map[index] = new Entry(data_type::palette4, location, Buffer(palette_data, 256 * 3)));
+            }
+            else
+            {
+                for (int f = 0; f < h1 + 1; f++)
+                {
+                    palette_data[to++] = script[2 + location + (f * 3) + 0];
+                    palette_data[to++] = script[2 + location + (f * 3) + 1];
+                    palette_data[to++] = script[2 + location + (f * 3) + 2];
+                }
+                
+                _active_pal = palette_data;
+                return (_entry_map[index] = new Entry(data_type::palette8, location, Buffer(palette_data, 256 * 3)));
+            }
+        }
+        case 0xff:
+        {
+            uint8_t *data = new uint8_t[composite_width * composite_height];
+            memset(data, 0, composite_width * composite_height);
+            
+            if (h1 == 0)
+            {
+                // clear screen?
+                return (_entry_map[index] = new Entry(data_type::composite, location, Buffer(data, composite_width * composite_height)));
+            }
+            else
+            {
+                // draw call
+                // uint8    command (0 normal, )
+                // uint8    entry
+                // uint16   x origin (from left side of screen to bitmap center)
+                // uint16   draw order
+                // uint16   y origin (from bottom side of screen to bitmap center)
+                
+                std::map<int, uint8_t *> layers;
+                
+                // HACK: we don't know where on screen script wants to draw
+                // so, to actually display anything, check if positions fit screen, if not center it.
+                
+                int minX = composite_width;
+                int minY = composite_height;
+                int maxX = 0;
+                int maxY = 0;
+                
+                for (int b = 0; b < h1; b++)
+                {
+                    bytes[0] = script[b * 8 + location + 1];
+                    uint8_t idx = (*(uint8_t *)(bytes));
+                    
+                    bytes[1] = script[b * 8 + location + 2];
+                    bytes[0] = script[b * 8 + location + 3];
+                    int16_t x = (*(int16_t *)(bytes));
+                    
+                    bytes[1] = script[b * 8 + location + 4];
+                    bytes[0] = script[b * 8 + location + 5];
+                    int16_t d = (*(int16_t *)(bytes));
+                    
+                    bytes[1] = script[b * 8 + location + 6];
+                    bytes[0] = script[b * 8 + location + 7];
+                    int16_t y = (*(int16_t *)(bytes));
+                    
+                    if (idx >= 0 && idx < entries)
+                    {
+                        Entry *entry = get_entry_data(script, mod, address, entries, idx);
+                        if (entry->type == data_type::image2 || entry->type == data_type::image4ST || entry->type == data_type::image4 || entry->type == data_type::image8)
+                        {
+                            bytes[1] = script[entry->position + 0];
+                            bytes[0] = script[entry->position + 1];
+                            int width = *(uint16_t *)(bytes) + 1;
+                            
+                            bytes[1] = script[entry->position + 2];
+                            bytes[0] = script[entry->position + 3];
+                            int height = *(uint16_t *)(bytes) + 1;
+                            
+                            int xx = 1 + x - ((width + 1) / 2);
+                            if (xx < minX)
+                                minX = xx;
+                            
+                            // NOTE: works in colorado
+                            // int yy = composite_height - (d + y + ((height + 1) / 2));
+                            int yy = composite_height - (y + ((height + 1) / 2));
+                            if (yy < minY)
+                                minY = yy;
+                            
+                            if (xx + width > maxX)
+                                maxX = xx + width;
+                            
+                            if (yy + height > maxY)
+                                maxY = yy + height;
+                        }
+                    }
+                }
+                
+                int modX = 0;
+                int modY = 0;
+                if (minX < 0 || maxX >= composite_width)
+                {
+                    modX = (composite_width / 2) - (((maxX - minX) / 2) + minX);
+                }
+                
+                if (minY < 0 || maxY >= composite_height)
+                {
+                    modY = (composite_height / 2) - (((maxY - minY) / 2) + minY);
+                }
+                
+                for (int b = 0; b < h1; b++)
+                {
+                    bytes[0] = script[b * 8 + location + 0];
+                    uint8_t cmd = (*(uint8_t *)(bytes));
+                    
+                    bytes[0] = script[b * 8 + location + 1];
+                    uint8_t idx = (*(uint8_t *)(bytes));
+                    
+                    bytes[1] = script[b * 8 + location + 2];
+                    bytes[0] = script[b * 8 + location + 3];
+                    int16_t x = (*(int16_t *)(bytes));
+                    
+                    bytes[1] = script[b * 8 + location + 4];
+                    bytes[0] = script[b * 8 + location + 5];
+                    int16_t d = (*(int16_t *)(bytes));
+                    
+                    bytes[1] = script[b * 8 + location + 6];
+                    bytes[0] = script[b * 8 + location + 7];
+                    int16_t y = (*(int16_t *)(bytes));
+                    
+                    if (layers[d] == NULL)
+                    {
+                        layers[d] = new uint8_t[composite_width * composite_height];
+                        memset(layers[d], 0, composite_width * composite_height);
+                    }
+                    
+                    if (idx >= 0 && idx < entries)
+                    {
+                        Entry *entry = get_entry_data(script, mod, address, entries, idx);
+                        if (entry->type != none && entry->type != unknown)
+                        {
+                            bytes[1] = script[entry->position + 0];
+                            bytes[0] = script[entry->position + 1];
+                            int width = *(uint16_t *)(bytes) + 1;
+                            
+                            bytes[1] = script[entry->position + 2];
+                            bytes[0] = script[entry->position + 3];
+                            int height = *(uint16_t *)(bytes) + 1;
+                            
+                            int xx = 1 + x - ((width + 1) / 2);
+                            xx += modX;
+                            
+                            // int yy = composite_height - (d + y + ((height + 1) / 2));
+                            int yy = composite_height - (y + ((height + 1) / 2));
+                            yy += modY;
+                            
+                            int vs = 0;
+                            int vf = yy;
+                            int vt = height;
+                            if (vf < 0)
+                            {
+                                vf = 0;
+                                vt += yy;
+                                vs -= yy;
+                            }
+                            
+                            if (vt + vf >= composite_height)
+                            {
+                                vt = composite_height - vf;
+                            }
+                            
+                            int hs = 0;
+                            int hf = xx;
+                            int ht = width;
+                            if (hf < 0)
+                            {
+                                hf = 0;
+                                ht += xx;
+                                hs -= xx;
+                            }
+                            
+                            if (ht + hf >= composite_width)
+                            {
+                                ht = composite_width - hf;
+                            }
+                            
+                            uint8_t *layer = layers[d];
+                            
+                            if (entry->type == data_type::image2 || entry->type == data_type::image4ST || entry->type == data_type::image4 || entry->type == data_type::image8)
+                            {
+                                int clear = 0;
+                                if (entry->type == data_type::image4)
+                                {
+                                    clear = script[entry->position + 5] + script[entry->position + 4];
+                                }
+                                
+                                if (entry->type == data_type::image8)
+                                {
+                                    clear = script[entry->position + 5];
+                                }
+                                
+                                for (int h = vs; h < vs + vt; h++)
+                                {
+                                    for (int w = hs; w < hs + ht; w++)
+                                    {
+                                        uint8_t color = entry->buffer.data[(cmd ? width - (w + 1) : w) + h * width];
+                                        if (color != clear)
+                                        {
+                                            uint8_t *ptr = layer + xx + w + ((yy + h) * composite_width);
+                                            *ptr = color;
+                                        }
+                                    }
+                                }
+                            }
+                            else if (entry->type == data_type::rectangle)
+                            {
+                                for (int h = vs; h < vt; h++)
+                                {
+                                    memset(layer + hf + ((yy + h) * composite_width), 0, ht);
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                for (auto it = layers.rbegin(); it != layers.rend(); it++)
+                {
+                    for (int p = 0; p < composite_height; p++)
+                    {
+                        uint8_t *ptr = data + p * composite_width;
+                        for (int a = 0; a < composite_width; a++, ptr++)
+                        {
+                            uint8_t color = it->second[a + p * composite_width];
+                            if (color)
+                            {
+                                *ptr = color;
+                            }
+                        }
+                    }
+                    
+                    delete [] it->second;
+                }
+                
+                return (_entry_map[index] = new Entry(data_type::composite, location, Buffer(data, composite_width * composite_height)));
+            }
+        }
+        case 0x100:
+        case 0x104:
+        {
+            bytes[3] = script[location + 0];
+            bytes[2] = script[location + 1];
+            bytes[1] = script[location + 2];
+            bytes[0] = script[location + 3];
+            uint32_t len = (*(uint32_t *)(bytes)) - 1;
+
+            uint8_t *data = new uint8_t[len];
+            memcpy(data, script.data + location + 4, len);
+
+            return (_entry_map[index] = new Entry(data_type::pattern, location, Buffer(data, len)));
+        }
+        case 0x101:
+        case 0x102:
+        {
+            bytes[3] = script[location + 0];
+            bytes[2] = script[location + 1];
+            bytes[1] = script[location + 2];
+            bytes[0] = script[location + 3];
+            uint32_t len = (*(uint32_t *)(bytes)) - 1;
+
+            uint8_t *data = new uint8_t[len];
+            memcpy(data, script.data + location + 4, len);
+
+            return (_entry_map[index] = new Entry(data_type::sample, location, Buffer(data, len)));
+        }
+
+        default:
+        {
+            if (h0 > 0x100)
+            {
+                cout << "Unknown sound type!" << endl;
+            }
+            
+            break;
         }
     }
     
     return (_entry_map[index] = new Entry());
+}
+
+const char *string_for_type(data_type type)
+{
+    switch (type)
+    {
+        case none:
+            return "none";
+        case image2:
+            return "bitmap 2 bit";
+        case image4ST:
+            return "bitmap 4 bit v1";
+        case image4:
+            return "bitmap 4 bit v2";
+        case image8:
+            return "bitmap 8 bit";
+        case video:
+            return "video";
+        case palette4:
+            return "4 bit palette";
+        case palette8:
+            return "8 bit palette";
+        case composite:
+            return "composite";
+        case rectangle:
+            return "rectangle";
+        default:
+            break;
+    };
+
+    return "unknown";
 }
 
 void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int length, uint32_t etype, vector<uint8_t *> *pal_overrides)
@@ -1090,10 +1095,11 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
     uint32_t location = 0;
     uint32_t address = 0;
     uint32_t entries = 0;
+    uint32_t mod = 0;
 
     // find adresses for all assets in file
     
-    if (find_assets(name, buffer, length, address, entries))
+    if (find_assets(buffer, length, address, entries, mod))
     {
         cout << " containing " << std::dec << entries << " assets" << endl;
     }
@@ -1103,7 +1109,7 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
     }
     
     // identify known types and save them
-    // (for the moment bitmaps, rectangles, palettes, draw command and fli video are recognized)
+    // (for the moment bitmaps, rectangles, palettes, draw commands, samples and fli videos are recognized)
     
     int width;
     int height;
@@ -1131,7 +1137,7 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
         location = position + 2 + value;
         if (value > 0 && location < length)
         {
-            entryList[i] = get_entry_data(script, address, entries, i);
+            entryList[i] = get_entry_data(script, mod, address, entries, i);
         }
     }
     
@@ -1154,10 +1160,11 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
             
             active_pal = pal_overrides && pal_overrides->size() > i && (*pal_overrides)[i] ? (*pal_overrides)[i] : _override_pal ? _override_pal : _default_pal;
 
-            Entry *entry = entryList[i];//get_entry_data(script, address, entries, i);
+            Entry *entry = entryList[i];
             switch (entry->type)
             {
                 case data_type::palette4:
+                {
                     cout << "palette 16" << endl;
                     
                     if (_list_only == false && etype & ex_palette)
@@ -1165,43 +1172,45 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
                         write_buffer(std::filesystem::path(_out_dir) / (name + " " + std::to_string(i) + ".act"), entry->buffer);
                     }
                     break;
-                    
+                }
                 case data_type::palette8:
+                {
                     cout << "palette 256" << endl;
-
+                    
                     if (_list_only == false && etype & ex_palette)
                     {
                         write_buffer(std::filesystem::path(_out_dir) / (name + " " + std::to_string(i) + ".act"), entry->buffer);
                     }
                     break;
-                    
+                }
                 case data_type::image2:
-                case data_type::image4old:
+                case data_type::image4ST:
                 case data_type::image4:
-                case data_type::image8: {
+                case data_type::image8:
+                {
                     bytes[1] = buffer[location + 0];
                     bytes[0] = buffer[location + 1];
                     width = *(uint16_t *)(bytes) + 1;
-    
+                    
                     bytes[1] = buffer[location + 2];
                     bytes[0] = buffer[location + 3];
                     height = *(uint16_t *)(bytes) + 1;
-                    log_data(buffer, location - 2, 2, 0, "bitmap Id %d %d bit, %d x %d ", h1, (h0 < 13 ? 4 : 8), width, height);
-
+                    log_data(buffer, location - 2, 2, 0, "%s bit, %d x %d ", string_for_type(entry->type), width, height);
+                    
                     if (_list_only == false && etype & ex_image)
                     {
                         std::filesystem::path out = _out_dir / (name + " " + std::to_string(i) + ".png");
-
+                        
                         if (_force_tc)
                         {
                             uint8_t *data = new uint8_t[width * height * 4];
-                    
+                            
                             int clear = -1;
                             if (entry->type == data_type::image4)
                             {
-                                 clear = buffer[location + 5] + buffer[location + 4];
+                                clear = buffer[location + 5] + buffer[location + 4];
                             }
-
+                            
                             if (entry->type == data_type::image8)
                             {
                                 clear = buffer[location + 5];
@@ -1216,7 +1225,7 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
                                 data[to++] = active_pal[index * 3 + 2];
                                 data[to++] = index == clear ? 0x00 : 0xff;
                             }
-                    
+                            
                             write_png_file(out.string().c_str(), width, height, PNG_COLOR_TYPE_RGBA, 8, data);
                         }
                         else
@@ -1224,9 +1233,10 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
                             write_png_file(out.string().c_str(), width, height, PNG_COLOR_TYPE_PALETTE, 8, entry->buffer.data, active_pal);
                         }
                     }
-                    break; }
-                    
-                case data_type::video: {
+                    break;
+                }
+                case data_type::video:
+                {
                     bytes[3] = buffer[location + 0];
                     bytes[2] = buffer[location + 1];
                     bytes[1] = buffer[location + 2];
@@ -1235,16 +1245,17 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
                     char *fliname = (char *)&buffer[location + 4];
                     uint32_t size2 = (*(uint32_t *)(&buffer[location + 30]));
                     uint16_t frames = (*(uint16_t *)(&buffer[location + 36]));
-
+                    
                     log_data(buffer, location - 2, 2, 4, "FLI video (%s) %d bytes [size: %d frames: %d]", fliname, size, size2, frames);
-
+                    
                     if (_list_only == false && etype & ex_video)
                     {
                         write_buffer(std::filesystem::path(_out_dir) / (name + " " + std::to_string(i) + ".fli"), entry->buffer);
                     }
-                    break; }
-                    
-                case data_type::draw: {
+                    break;
+                }
+                case data_type::composite:
+                {
                     log_data(buffer, location - 2, 2, 0, "%d draw instructions ", h1);
                     
                     for (int b = 0; b < h1; b++)
@@ -1274,72 +1285,37 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
                         // 129      = ???
                         // 134      = ???
                         // 34       = ???
-                        
-                        Entry *e = entryList[index];
-                        
-                        char type[16] = "";
-                        switch (e->type)
-                        {
-                            case none:
-                                strcpy(type, "none");
-                                break;
-                            case image2:
-                                strcpy(type, "image 2 bit");
-                                break;
-                            case image4old:
-                                strcpy(type, "image 4 bit v1");
-                                break;
-                            case image4:
-                                strcpy(type, "image 4 bit v2");
-                                break;
-                            case image8:
-                                strcpy(type, "image 8 bit");
-                                break;
-                            case video:
-                                strcpy(type, "video");
-                                break;
-                            case palette4:
-                                strcpy(type, "16c palette");
-                                break;
-                            case palette8:
-                                strcpy(type, "256c palette");
-                                break;
-                            case draw:
-                                strcpy(type, "draw");
-                                break;
-                            case rectangle:
-                                strcpy(type, "rectangle");
-                                break;
-                            case unknown12:
-                                strcpy(type, "unknown 12 bit");
-                                break;
-                            case unknown:
-                                strcpy(type, "unknown");
-                                break;
-                        };
-                        
-                        bytes[1] = script[e->position + 0];
-                        bytes[0] = script[e->position + 1];
-                        width = *(uint16_t *)(bytes) + 1;
 
-                        bytes[1] = script[e->position + 2];
-                        bytes[0] = script[e->position + 3];
-                        height = *(uint16_t *)(bytes) + 1;
-                       
-                        cout << "  cmd: " << std::dec << std::setw(3) << (int)cmd << " index: " << std::dec << std::setw(3) << (int)index << " type: " << type << " x " << std::dec << x << " y " << std::dec << y  << " w " << std::dec << width << " h " << std::dec << height << " order: " << std::dec << o << endl;
+                        Entry *e = entryList[index];
+                        if (e->type != none && e->type != unknown)
+                        {
+                            bytes[1] = script[e->position + 0];
+                            bytes[0] = script[e->position + 1];
+                            width = *(uint16_t *)(bytes) + 1;
+                            
+                            bytes[1] = script[e->position + 2];
+                            bytes[0] = script[e->position + 3];
+                            height = *(uint16_t *)(bytes) + 1;
+                            
+                            cout << "  cmd: " << std::dec << std::setw(3) << (int)cmd << " index: " << std::dec << std::setw(3) << (int)index << " type: " << string_for_type(e->type) << " x " << std::dec << x << " y " << std::dec << y  << " w " << std::dec << width << " h " << std::dec << height << " order: " << std::dec << o << endl;
+                        }
+                        else
+                        {
+                            cout << "  cmd: " << std::dec << std::setw(3) << (int)cmd << " index: " << std::dec << std::setw(3) << (int)index << " type: " << string_for_type(e->type) << " x " << std::dec << x << " y " << std::dec << y  << " w ? h ? order: " << std::dec << o << endl;
+                        }
                     }
                     
                     // TODO: do composition in 32 bit
                     if (_list_only == false && etype & ex_draw)
                     {
-                        std::filesystem::path out = _out_dir / (name + " " + std::to_string(i) + " (draw cmd)" + ".png");
+                        std::filesystem::path out = _out_dir / (name + " " + std::to_string(i) + " (composite)" + ".png");
 
                         if (_force_tc)
                         {
-                            uint8_t *data = new uint8_t[320 * 200 * 4];
+                            uint8_t *data = new uint8_t[composite_width * composite_height * 4];
                     
                             int to = 0;
-                            for (int x = 0; x < 320 * 200; x++)
+                            for (int x = 0; x < composite_width * composite_height; x++)
                             {
                                 int index = entry->buffer.data[x];
                                 data[to++] = active_pal[index * 3 + 0];
@@ -1348,36 +1324,115 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
                                 data[to++] = 0xff;
                             }
                     
-                            write_png_file(out.string().c_str(), 320, 200, PNG_COLOR_TYPE_RGBA, 8, data);
+                            write_png_file(out.string().c_str(), composite_width, composite_height, PNG_COLOR_TYPE_RGBA, 8, data);
                         }
                         else
                         {
-                            write_png_file(out.string().c_str(), 320, 200, PNG_COLOR_TYPE_PALETTE, 8, entry->buffer.data, active_pal);
+                            write_png_file(out.string().c_str(), composite_width, composite_height, PNG_COLOR_TYPE_PALETTE, 8, entry->buffer.data, active_pal);
                         }
                     }
-                    break; }
-                    
+                    break;
+                }
                 case data_type::rectangle:
+                {
                     // NOTE: following 4 bytes describing size of black rectangle
                     bytes[1] = buffer[location + 0];
                     bytes[0] = buffer[location + 1];
                     width = *(uint16_t *)(bytes) + 1;
-    
+                    
                     bytes[1] = buffer[location + 2];
                     bytes[0] = buffer[location + 3];
                     height = *(uint16_t *)(bytes) + 1;
                     log_data(buffer, location - 2, 2, 4, "rectangle Id %d, %d x %d ", h1, width, height);
                     break;
-
-                case data_type::unknown12:
-                    // NOTE: following 12 bytes of unknown data
-                    log_data(buffer, location - 2, 2, 12, "12 bytes of unknown data ");
-                    break;
-
-                default:
+                }
+                case data_type::pattern:
+                {
+                    if (_list_only == false && etype & ex_sound)
+                    {
+                        std::filesystem::path filename = std::filesystem::path(_out_dir) / (name + " " + std::to_string(i) + ".pattern");
+                        
+                        FILE *fp = fopen(filename.string().c_str(), "wb");
+                        if (!fp)
+                            abort();
+                        
+                        if (fwrite(entry->buffer.data, entry->buffer.size, 1, fp) != 1)
+                            abort();
+                        
+                        fclose(fp);
+                    }
                     
+                    log_data(buffer, location - 2, 2, 4, "Possible mod pattern? (%d bytes)", entry->buffer.size);
+                    break;
+                }
+                case data_type::sample:
+                {
+                    int freq = buffer[location - 1];
+                    if (freq < 3 || freq > 23)
+                        freq = 8;
+                    
+                    int len = entry->buffer.size;
+
+                    if (_list_only == false && etype & ex_sound)
+                    {
+                        std::filesystem::path filename = std::filesystem::path(_out_dir) / (name + " " + std::to_string(i) + ".wav");
+                        
+                        FILE *fp = fopen(filename.string().c_str(), "wb");
+                        if (!fp)
+                            abort();
+                        
+                        int res = write_wav_header(fp, freq * 1000, len);
+                        if (res)
+                            abort();
+                        
+                        // try to find out if sample is signed or unsigned
+                        
+                        int smp_signed = 0;
+                        int smp_unsigned = 0;
+                        
+                        for (int b = 0; b < len; b++)
+                        {
+                            uint8_t tui = entry->buffer.data[b];
+                            uint8_t tsi = entry->buffer.data[b] ^ 0x80;
+                            
+                            if (tui != tsi)
+                            {
+                                if (tui > tsi)
+                                {
+                                    smp_unsigned++;
+                                }
+                                else
+                                {
+                                    smp_signed++;
+                                }
+                            }
+                        }
+                        
+                        if (smp_unsigned > smp_signed)
+                        {
+                            // convert from signed to unsigned PCM
+                            // NOTE: wav doesn't support signed 8 bit sample
+                            
+                            for (int b = 0; b < len; b++)
+                            {
+                                entry->buffer.data[b]  ^= 0x80;
+                            }
+                        }
+                        
+                        if (fwrite(entry->buffer.data, len, 1, fp) != 1)
+                            abort();
+                        
+                        fclose(fp);
+                    }
+                    
+                    log_data(buffer, location - 2, 2, 4, "PCM sample %d bytes %d Hz", len, freq);
+                    break;
+                }
+                default:
+                {
                     log_data(buffer, location - 2, 2, 8, "unknown ");
                     break;
+                }
             }
         }
         else

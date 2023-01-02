@@ -32,16 +32,17 @@ enum data_type {
     
     none        = 0,
     image2      = 1,
-    image4old   = 2,
+    image4ST   = 2,
     image4      = 3,
     image8      = 4,
     video       = 5,
     palette4    = 6,
     palette8    = 7,
-    draw        = 8,
-    rectangle    = 9,
-    unknown12   = 10,
-    unknown     = 11
+    composite   = 8,
+    rectangle   = 9,
+    sample      = 10,
+    pattern     = 11,
+    unknown     = 12
 };
 
 enum extract_type {
@@ -51,6 +52,8 @@ enum extract_type {
     ex_palette     = 1 << 2,
     ex_draw        = 1 << 3,
     ex_rectangle   = 1 << 4,
+    ex_sound       = 1 << 5,
+    ex_ranges      = 1 << 6,
     ex_everything  = 0xFFFFFFFF
 };
 
@@ -93,13 +96,13 @@ public:
     void extract_file(const path& file, uint32_t etype = ex_everything, vector<uint8_t *> *pal_overrides = NULL);
     void extract_buffer(const std::string& name, uint8_t *buffer, int length, uint32_t etype, vector<uint8_t *> *pal_overrides = NULL);
 
-    bool find_assets(const std::string& name, const uint8_t *buffer, int length, uint32_t& address, uint32_t& entries);
-
 private:
-    
+
+    bool find_assets(const uint8_t *buffer, int length, uint32_t& address, uint32_t& entries, uint32_t& mod);
+
     void set_palette(Buffer& script, uint32_t address, uint32_t entries);
 
-    Entry *get_entry_data(Buffer& script, uint32_t address, uint32_t entries, uint32_t index);
+    Entry *get_entry_data(Buffer& script, uint32_t mod, uint32_t address, uint32_t entries, uint32_t index);
 
     void write_buffer(const std::filesystem::path& path, const Buffer& buffer);
     void write_png_file(const char *filename, int width, int height, png_byte color_type, png_byte bit_depth, uint8_t *data, uint8_t *palette = NULL);
