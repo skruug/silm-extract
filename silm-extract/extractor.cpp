@@ -23,7 +23,9 @@
 
 extern "C"
 {
-    #include "depack.h"
+    #include "debug.h"
+    #include "platform.h"
+    #include "unpack.h"
 }
 
 using std::cout; using std::cin;
@@ -117,15 +119,15 @@ void extractor::extract_file(const path& file, uint32_t type, vector<uint8_t *> 
 
         int unpacked_size = 0;
         uint8_t *unpacked = NULL;
-        if (depack_is_packed((uint8_t *)buffer))
+        
+        sPlatform *platform = pl_guess(file.string().c_str());
+        _is_little_endian = platform->is_little_endian;
+
+        unpacked_size = unpack_script(file.string().c_str(), platform->is_little_endian, &unpacked);
+        if (unpacked_size >= 0)
         {
-            unpacked_size = depack_get_size((uint8_t *)buffer);
-            unpacked = depack_buffer((uint8_t *)buffer);
-            if (unpacked)
-            {
-                extract_buffer(name, unpacked, unpacked_size, type, pal_overrides);
-                free(unpacked);
-            }
+            extract_buffer(name, unpacked, unpacked_size, type, pal_overrides);
+            free(unpacked);
         }
         else
         {
@@ -271,12 +273,42 @@ void extractor::write_png_file(const char *filename, int width, int height, png_
     png_free_data(png, info, mask, -1);
 }
 
+uint16_t extractor::read2b(const uint8_t *buffer)
+{
+    if (_is_little_endian)
+    {
+        return *(uint16_t *)(buffer);
+    }
+    else
+    {
+        uint8_t bytes[2];
+        bytes[1] = buffer[0];
+        bytes[0] = buffer[1];
+        return *(uint16_t *)(bytes);
+    }
+}
+
+uint32_t extractor::read4b(const uint8_t *buffer)
+{
+    if (_is_little_endian)
+    {
+        return *(uint32_t *)(buffer);
+    }
+    else
+    {
+        uint8_t bytes[4];
+        bytes[3] = buffer[0];
+        bytes[2] = buffer[1];
+        bytes[1] = buffer[2];
+        bytes[0] = buffer[3];
+        return *(uint32_t *)(bytes);
+    }
+}
+
 int extractor::asset_size(const uint8_t *buffer)
 {
     int h0 = buffer[0];
     int h1 = buffer[1];
-
-    uint8_t bytes[4];
 
     switch (h0)
     {
@@ -287,49 +319,27 @@ int extractor::asset_size(const uint8_t *buffer)
         case 0x00:
         case 0x02:
         {
-            bytes[1] = buffer[2 + 0];
-            bytes[0] = buffer[2 + 1];
-            int width = *(uint16_t *)(bytes) + 1;
-
-            bytes[1] = buffer[2 + 2];
-            bytes[0] = buffer[2 + 3];
-            int height = *(uint16_t *)(bytes) + 1;
-            
+            int width = read2b(buffer + 2) + 1;
+            int height = read2b(buffer + 4) + 1;
             return width / (_platform_ext == "mo" ? 4 :  2) * height;
         }
         case 0x10:
         case 0x12:
         {
-            bytes[1] = buffer[2 + 0];
-            bytes[0] = buffer[2 + 1];
-            int width = *(uint16_t *)(bytes) + 1;
-
-            bytes[1] = buffer[2 + 2];
-            bytes[0] = buffer[2 + 3];
-            int height = *(uint16_t *)(bytes) + 1;
-
+            int width = read2b(buffer + 2) + 1;
+            int height = read2b(buffer + 4) + 1;
             return (width / 2) * height;
         }
         case 0x14:
         case 0x16:
         {
-            bytes[1] = buffer[2 + 0];
-            bytes[0] = buffer[2 + 1];
-            int width = *(uint16_t *)(bytes) + 1;
-
-            bytes[1] = buffer[2 + 2];
-            bytes[0] = buffer[2 + 3];
-            int height = *(uint16_t *)(bytes) + 1;
-
+            int width = read2b(buffer + 2) + 1;
+            int height = read2b(buffer + 4) + 1;
             return width * height;
         }
         case 0x40:
         {
-            bytes[3] = buffer[2 + 0];
-            bytes[2] = buffer[2 + 1];
-            bytes[1] = buffer[2 + 2];
-            bytes[0] = buffer[2 + 3];
-            return (*(uint32_t *)(bytes)) - 1;
+            return read4b(buffer + 2) - 1;
         }
         case 0xfe:
         {
@@ -344,11 +354,7 @@ int extractor::asset_size(const uint8_t *buffer)
         case 0x102:
         case 0x104:
         {
-            bytes[3] = buffer[2 + 0];
-            bytes[2] = buffer[2 + 1];
-            bytes[1] = buffer[2 + 2];
-            bytes[0] = buffer[2 + 3];
-            return (*(uint32_t *)(bytes)) - 1;
+            return read4b(buffer + 2) - 1;
         }
 
         default:
@@ -362,18 +368,12 @@ int extractor::asset_size(const uint8_t *buffer)
 
 bool extractor::does_it_overlap(const uint8_t *buffer, int address, int entries, int skip_entry, int location, int length)
 {
-    uint8_t bytes[4];
     for (int e = 0; e < entries; e ++)
     {
         if (skip_entry != e)
         {
             uint32_t position = address + e * 4;
-            bytes[3] = buffer[position + 0];
-            bytes[2] = buffer[position + 1];
-            bytes[1] = buffer[position + 2];
-            bytes[0] = buffer[position + 3];
-
-            uint32_t eloc = position + 2 + (*(uint32_t *)(bytes));
+            uint32_t eloc = position + 2 + read4b(buffer + position);
             uint32_t esize = asset_size(buffer + eloc - 2);
             
             if (eloc + esize > location && eloc < location + length)
@@ -388,17 +388,12 @@ bool extractor::does_it_overlap(const uint8_t *buffer, int address, int entries,
 
 bool extractor::does_it_fit(const uint8_t *buffer, int length, int a, int e)
 {
-    uint8_t bytes[4];
     uint32_t value;
 
     for (int i = 0; i < e; i ++)
     {
         uint32_t position = a + i * 4;
-        bytes[3] = buffer[position + 0];
-        bytes[2] = buffer[position + 1];
-        bytes[1] = buffer[position + 2];
-        bytes[0] = buffer[position + 3];
-        value = (*(uint32_t *)(bytes));
+        value = read4b(buffer + position);
         if (value <= 0 || (position + 2 + value) >= length)
         {
             return false;
@@ -421,16 +416,9 @@ int compare_arrays(const uint8_t *a, const uint8_t *b, int n)
 
 bool extractor::find_assets(const uint8_t *buffer, int length, uint32_t& address, uint32_t& entries, uint32_t& mod)
 {
-    uint8_t bytes[4];
     uint32_t location;
     
     mod = 0;
-
-    // NOTE: looks like header is different using amiga decruncher
-    // for the moment do not use!
-    // bytes[1] = buffer[4];
-    // bytes[0] = buffer[5];
-    // uint16_t start = (*(uint16_t *)(bytes));
 
     uint8_t pattern1[] = { 0x44, 0x00, 0x00, 0x00, 0x00, 0x58, 0x00, 0x00, 0x00, 0x00, 0x00, 0x58, 0x00, 0x00, 0x00, 0x00, 0x00, 0x58 };
     uint8_t pattern2[] = { 0x44, 0x00, 0x00, 0x00, 0x58, 0x00, 0x00, 0x00, 0x00, 0x00, 0x58, 0x00, 0x00, 0x00, 0x00, 0x00, 0x58 };
@@ -442,16 +430,10 @@ bool extractor::find_assets(const uint8_t *buffer, int length, uint32_t& address
         if (buffer[i + 1] == 0x44)
         {
             location = i + 2 + i % 2;
-            bytes[3] = buffer[location + 0];
-            bytes[2] = buffer[location + 1];
-            bytes[1] = buffer[location + 2];
-            bytes[0] = buffer[location + 3];
-            a = (*(uint32_t *)(bytes));
+            a = read4b(buffer + location);
 
             location = location + 4;
-            bytes[1] = buffer[location + 0];
-            bytes[0] = buffer[location + 1];
-            e = (*(uint16_t *)(bytes));
+            e = read2b(buffer + location);
 
             if (a && e)
             {
@@ -481,9 +463,7 @@ bool extractor::find_assets(const uint8_t *buffer, int length, uint32_t& address
             
             if (location)
             {
-                bytes[1] = buffer[location + 0];
-                bytes[0] = buffer[location + 1];
-                e = (*(uint16_t *)(bytes));
+                e = read2b(buffer + location);
                 
                 location = location + 6;
                 for (int idx = location; idx < length; idx ++)
@@ -498,11 +478,7 @@ bool extractor::find_assets(const uint8_t *buffer, int length, uint32_t& address
                         
                         for (int s = 0; s < e; s++)
                         {
-                            bytes[3] = buffer[location + 0];
-                            bytes[2] = buffer[location + 1];
-                            bytes[1] = buffer[location + 2];
-                            bytes[0] = buffer[location + 3];
-                            a = (*(uint32_t *)(bytes));
+                            a = read4b(buffer + location);
 
                             uint32_t test = (location + a + 8);
                             if (test >= length)
@@ -511,12 +487,7 @@ bool extractor::find_assets(const uint8_t *buffer, int length, uint32_t& address
                                 break;
                             }
 
-                            bytes[3] = buffer[location + a + 2 + 0];
-                            bytes[2] = buffer[location + a + 2 + 1];
-                            bytes[1] = buffer[location + a + 2 + 2];
-                            bytes[0] = buffer[location + a + 2 + 3];
-                            uint32_t len = (*(uint32_t *)(bytes)) - 1;
-                            
+                            uint32_t len = read4b(buffer + location + a + 2) - 1;
                             if ((uint32_t)(location + a + len) >= length || len >= length)
                             {
                                 reset = true;
@@ -548,19 +519,13 @@ bool extractor::find_assets(const uint8_t *buffer, int length, uint32_t& address
 
 void extractor::set_palette(Buffer& script, uint32_t address, uint32_t entries)
 {
-    uint8_t bytes[4];
-
     int h0;
     int h1;
 
     for (int i = 0; i < entries; i ++)
     {
         uint32_t position = address + i * 4;
-        bytes[3] = script[position + 0];
-        bytes[2] = script[position + 1];
-        bytes[1] = script[position + 2];
-        bytes[0] = script[position + 3];
-        uint32_t value = (*(uint32_t *)(bytes));
+        uint32_t value = read4b(script.data + position);
 
         uint32_t location = position + 2 + value;
 
@@ -591,19 +556,12 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t mod, uint32_t address,
     {
         return _entry_map[index];
     }
-    
-    uint8_t bytes[4];
 
     int h0;
     int h1;
 
     uint32_t position = address + index * 4;
-    bytes[3] = script[position + 0];
-    bytes[2] = script[position + 1];
-    bytes[1] = script[position + 2];
-    bytes[0] = script[position + 3];
-    uint32_t value = (*(uint32_t *)(bytes));
-
+    uint32_t value = read4b(script.data + position);
     uint32_t location = position + 2 + value;
 
     h0 = mod + script[location - 2];
@@ -618,14 +576,8 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t mod, uint32_t address,
         case 0x00:
         case 0x02:
         {
-            bytes[1] = script[location + 0];
-            bytes[0] = script[location + 1];
-            int width = *(uint16_t *)(bytes) + 1;
-
-            bytes[1] = script[location + 2];
-            bytes[0] = script[location + 3];
-            int height = *(uint16_t *)(bytes) + 1;
-            
+            int width = read2b(script.data + location) + 1;
+            int height = read2b(script.data + location + 2) + 1;
             int at = location + 4;
             int to = 0;
             
@@ -683,16 +635,9 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t mod, uint32_t address,
         case 0x10:
         case 0x12:
         {
-            bytes[1] = script[location + 0];
-            bytes[0] = script[location + 1];
-            int width = *(uint16_t *)(bytes) + 1;
-
-            bytes[1] = script[location + 2];
-            bytes[0] = script[location + 3];
-            int height = *(uint16_t *)(bytes) + 1;
-
+            int width = read2b(script.data + location) + 1;
+            int height = read2b(script.data + location + 2) + 1;
             uint8_t *data = new uint8_t[width * height];
-
             int at = location + 4 + 2;
             int to = 0;
 
@@ -714,14 +659,8 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t mod, uint32_t address,
         case 0x14:
         case 0x16:
         {
-            bytes[1] = script[location + 0];
-            bytes[0] = script[location + 1];
-            int width = *(uint16_t *)(bytes) + 1;
-
-            bytes[1] = script[location + 2];
-            bytes[0] = script[location + 3];
-            int height = *(uint16_t *)(bytes) + 1;
-
+            int width = read2b(script.data + location) + 1;
+            int height = read2b(script.data + location + 2) + 1;
             uint8_t *data = new uint8_t[width * height];
             memcpy(data, script.data + location + 4 + 2, width * height);
                 
@@ -729,11 +668,7 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t mod, uint32_t address,
         }
         case 0x40:
         {
-            bytes[3] = script[location + 0];
-            bytes[2] = script[location + 1];
-            bytes[1] = script[location + 2];
-            bytes[0] = script[location + 3];
-            uint32_t size = (*(uint32_t *)(bytes));
+            uint32_t size = read4b(script.data + location);
             char *fliname = (char *)&script[location + 4];
             cout << "FLI video (" << fliname << ") " << std::dec << size << " bytes [";
 
@@ -817,34 +752,18 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t mod, uint32_t address,
                 
                 for (int b = 0; b < h1; b++)
                 {
-                    bytes[0] = script[b * 8 + location + 1];
-                    uint8_t idx = (*(uint8_t *)(bytes));
+                    uint8_t index = script[b * 8 + location + (_is_little_endian ? 0 : 1)];
+                    int16_t x = read2b(script.data + b * 8 + location + 2);
+                    int16_t d = read2b(script.data + b * 8 + location + 4);
+                    int16_t y = read2b(script.data + b * 8 + location + 6);
                     
-                    bytes[1] = script[b * 8 + location + 2];
-                    bytes[0] = script[b * 8 + location + 3];
-                    int16_t x = (*(int16_t *)(bytes));
-                    
-                    bytes[1] = script[b * 8 + location + 4];
-                    bytes[0] = script[b * 8 + location + 5];
-                    int16_t d = (*(int16_t *)(bytes));
-                    
-                    bytes[1] = script[b * 8 + location + 6];
-                    bytes[0] = script[b * 8 + location + 7];
-                    int16_t y = (*(int16_t *)(bytes));
-                    
-                    if (idx >= 0 && idx < entries)
+                    if (index >= 0 && index < entries)
                     {
-                        Entry *entry = get_entry_data(script, mod, address, entries, idx);
+                        Entry *entry = get_entry_data(script, mod, address, entries, index);
                         if (entry->type == data_type::image2 || entry->type == data_type::image4ST || entry->type == data_type::image4 || entry->type == data_type::image8)
                         {
-                            bytes[1] = script[entry->position + 0];
-                            bytes[0] = script[entry->position + 1];
-                            int width = *(uint16_t *)(bytes) + 1;
-                            
-                            bytes[1] = script[entry->position + 2];
-                            bytes[0] = script[entry->position + 3];
-                            int height = *(uint16_t *)(bytes) + 1;
-                            
+                            int width = read2b(script.data + entry->position) + 1;
+                            int height = read2b(script.data + entry->position + 2) + 1;
                             int xx = 1 + x - ((width + 1) / 2);
                             if (xx < minX)
                                 minX = xx;
@@ -882,37 +801,19 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t mod, uint32_t address,
                 {
                     for (auto &b: it->second)
                     {
-                        bytes[0] = script[b * 8 + location + 0];
-                        uint8_t cmd = (*(uint8_t *)(bytes));
-                        
-                        bytes[0] = script[b * 8 + location + 1];
-                        uint8_t idx = (*(uint8_t *)(bytes));
-                        
-                        bytes[1] = script[b * 8 + location + 2];
-                        bytes[0] = script[b * 8 + location + 3];
-                        int16_t x = (*(int16_t *)(bytes));
-                        
-                        bytes[1] = script[b * 8 + location + 4];
-                        bytes[0] = script[b * 8 + location + 5];
-                        int16_t d = (*(int16_t *)(bytes));
-                        
-                        bytes[1] = script[b * 8 + location + 6];
-                        bytes[0] = script[b * 8 + location + 7];
-                        int16_t y = (*(int16_t *)(bytes));
-                        
-                        if (idx >= 0 && idx < entries)
+                        uint8_t cmd = script[b * 8 + location + (_is_little_endian ? 1 : 0)];
+                        uint8_t index = script[b * 8 + location + (_is_little_endian ? 0 : 1)];
+                        int16_t x = read2b(script.data + b * 8 + location + 2);
+                        int16_t d = read2b(script.data + b * 8 + location + 4);
+                        int16_t y = read2b(script.data + b * 8 + location + 6);
+
+                        if (index >= 0 && index < entries)
                         {
-                            Entry *entry = get_entry_data(script, mod, address, entries, idx);
+                            Entry *entry = get_entry_data(script, mod, address, entries, index);
                             if (entry->type != none && entry->type != unknown)
                             {
-                                bytes[1] = script[entry->position + 0];
-                                bytes[0] = script[entry->position + 1];
-                                int width = *(uint16_t *)(bytes) + 1;
-                                
-                                bytes[1] = script[entry->position + 2];
-                                bytes[0] = script[entry->position + 3];
-                                int height = *(uint16_t *)(bytes) + 1;
-                                
+                                int width = read2b(script.data + entry->position) + 1;
+                                int height = read2b(script.data + entry->position + 2) + 1;
                                 int xx = 1 + x - ((width + 1) / 2);
                                 xx += modX;
                                 
@@ -994,12 +895,7 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t mod, uint32_t address,
         case 0x100:
         case 0x104:
         {
-            bytes[3] = script[location + 0];
-            bytes[2] = script[location + 1];
-            bytes[1] = script[location + 2];
-            bytes[0] = script[location + 3];
-            uint32_t len = (*(uint32_t *)(bytes)) - 1;
-
+            uint32_t len = read4b(script.data + location) - 1;
             uint8_t *data = new uint8_t[len];
             memcpy(data, script.data + location + 4, len);
 
@@ -1008,12 +904,7 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t mod, uint32_t address,
         case 0x101:
         case 0x102:
         {
-            bytes[3] = script[location + 0];
-            bytes[2] = script[location + 1];
-            bytes[1] = script[location + 2];
-            bytes[0] = script[location + 3];
-            uint32_t len = (*(uint32_t *)(bytes)) - 1;
-
+            uint32_t len = read4b(script.data + location) - 1;
             uint8_t *data = new uint8_t[len];
             memcpy(data, script.data + location + 4, len);
 
@@ -1128,18 +1019,13 @@ section \"Header\" {\n\
     
     std::map<uint32_t, uint32_t> loc_map;
     
-    uint8_t bytes[4];
     uint32_t value = 0;
     uint32_t location = 0;
 
     for (int i = 0; i < entries; i ++)
     {
         uint32_t position = address + i * 4;
-        bytes[3] = buffer[position + 0];
-        bytes[2] = buffer[position + 1];
-        bytes[1] = buffer[position + 2];
-        bytes[0] = buffer[position + 3];
-        value = (*(uint32_t *)(bytes));
+        value = read4b(buffer + position);
         
         location = position + value;
         
@@ -1166,11 +1052,7 @@ section \"Header\" {\n\
         int i = it->second;
 
         uint32_t position = address + i * 4;
-        bytes[3] = buffer[position + 0];
-        bytes[2] = buffer[position + 1];
-        bytes[1] = buffer[position + 2];
-        bytes[0] = buffer[position + 3];
-        value = (*(uint32_t *)(bytes));
+        value = read4b(buffer + position);
 
         location = position + 2 + value;
         
@@ -1203,7 +1085,6 @@ section \"Header\" {\n\
 
 void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int length, uint32_t etype, vector<uint8_t *> *pal_overrides)
 {
-    uint8_t bytes[4];
     uint32_t value = 0;
     uint32_t location = 0;
     uint32_t address = 0;
@@ -1241,11 +1122,7 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
         entryList.push_back(NULL);
         
         uint32_t position = address + i * 4;
-        bytes[3] = buffer[position + 0];
-        bytes[2] = buffer[position + 1];
-        bytes[1] = buffer[position + 2];
-        bytes[0] = buffer[position + 3];
-        value = (*(uint32_t *)(bytes));
+        value = read4b(buffer + position);
         
         location = position + 2 + value;
         if (value > 0 && location < length)
@@ -1257,11 +1134,7 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
     for (int i = 0; i < entries; i ++)
     {
         uint32_t position = address + i * 4;
-        bytes[3] = buffer[position + 0];
-        bytes[2] = buffer[position + 1];
-        bytes[1] = buffer[position + 2];
-        bytes[0] = buffer[position + 3];
-        value = (*(uint32_t *)(bytes));
+        value = read4b(buffer + position);
 
         location = position + 2 + value;
         if (value > 0 && location < length)
@@ -1301,13 +1174,8 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
                 case data_type::image4:
                 case data_type::image8:
                 {
-                    bytes[1] = buffer[location + 0];
-                    bytes[0] = buffer[location + 1];
-                    width = *(uint16_t *)(bytes) + 1;
-                    
-                    bytes[1] = buffer[location + 2];
-                    bytes[0] = buffer[location + 3];
-                    height = *(uint16_t *)(bytes) + 1;
+                    width = read2b(buffer + location) + 1;
+                    height = read2b(buffer + location + 2) + 1;
                     log_data(buffer, location - 2, 2, 0, "%s, %d x %d ", string_for_type(entry->type), width, height);
                     
                     if (_list_only == false && etype & ex_image)
@@ -1350,11 +1218,7 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
                 }
                 case data_type::video:
                 {
-                    bytes[3] = buffer[location + 0];
-                    bytes[2] = buffer[location + 1];
-                    bytes[1] = buffer[location + 2];
-                    bytes[0] = buffer[location + 3];
-                    uint32_t size = (*(uint32_t *)(bytes));
+                    uint32_t size = read4b(buffer + location);
                     char *fliname = (char *)&buffer[location + 4];
                     uint32_t size2 = (*(uint32_t *)(&buffer[location + 30]));
                     uint16_t frames = (*(uint16_t *)(&buffer[location + 36]));
@@ -1373,23 +1237,11 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
                     
                     for (int b = 0; b < h1; b++)
                     {
-                        bytes[0] = buffer[b * 8 + location + 0];
-                        uint8_t cmd = (*(uint8_t *)(bytes));
-
-                        bytes[0] = buffer[b * 8 + location + 1];
-                        uint8_t index = (*(uint8_t *)(bytes));
-    
-                        bytes[1] = buffer[b * 8 + location + 2];
-                        bytes[0] = buffer[b * 8 + location + 3];
-                        int16_t x = (*(int16_t *)(bytes));
-    
-                        bytes[1] = buffer[b * 8 + location + 4];
-                        bytes[0] = buffer[b * 8 + location + 5];
-                        int16_t o = (*(int16_t *)(bytes));
-    
-                        bytes[1] = buffer[b * 8 + location + 6];
-                        bytes[0] = buffer[b * 8 + location + 7];
-                        int16_t y = (*(int16_t *)(bytes));
+                        uint8_t cmd = buffer[b * 8 + location + (_is_little_endian ? 1 : 0)];
+                        uint8_t index = buffer[b * 8 + location + (_is_little_endian ? 0 : 1)];
+                        int16_t x = read2b(buffer + b * 8 + location + 2);
+                        int16_t o = read2b(buffer + b * 8 + location + 4);
+                        int16_t y = read2b(buffer + b * 8 + location + 6);
                         
                         // cmd
                         // 0        = draw
@@ -1402,13 +1254,8 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
                         Entry *e = entryList[index];
                         if (e->type != none && e->type != unknown)
                         {
-                            bytes[1] = script[e->position + 0];
-                            bytes[0] = script[e->position + 1];
-                            width = *(uint16_t *)(bytes) + 1;
-                            
-                            bytes[1] = script[e->position + 2];
-                            bytes[0] = script[e->position + 3];
-                            height = *(uint16_t *)(bytes) + 1;
+                            width = read2b(script.data + e->position) + 1;
+                            height = read2b(script.data + e->position + 2) + 1;
                             
                             cout << "  cmd: " << std::dec << std::setw(3) << (int)cmd << " index: " << std::dec << std::setw(3) << (int)index << " type: " << string_for_type(e->type) << " x " << std::dec << x << " y " << std::dec << y  << " w " << std::dec << width << " h " << std::dec << height << " order: " << std::dec << o << endl;
                         }
@@ -1449,13 +1296,8 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
                 case data_type::rectangle:
                 {
                     // NOTE: following 4 bytes describing size of black rectangle
-                    bytes[1] = buffer[location + 0];
-                    bytes[0] = buffer[location + 1];
-                    width = *(uint16_t *)(bytes) + 1;
-                    
-                    bytes[1] = buffer[location + 2];
-                    bytes[0] = buffer[location + 3];
-                    height = *(uint16_t *)(bytes) + 1;
+                    width = read2b(buffer + location) + 1;
+                    height = read2b(buffer + location + 2) + 1;
                     log_data(buffer, location - 2, 2, 4, "rectangle Id %d, %d x %d ", h1, width, height);
                     break;
                 }

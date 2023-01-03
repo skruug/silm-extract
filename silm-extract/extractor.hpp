@@ -115,6 +115,9 @@ private:
 
     void save_xml(const std::string& name, uint8_t *buffer, int length, uint32_t address, uint32_t entries, uint32_t mod, vector<Entry *> entryList);
 
+    uint16_t read2b(const uint8_t *buffer);
+    uint32_t read4b(const uint8_t *buffer);
+
     alis_platform _platform;
     std::string _platform_ext;
     
@@ -127,6 +130,8 @@ private:
     
     bool _force_tc;
     bool _list_only;
+    
+    bool _is_little_endian;
     
     std::map<int, Entry *> _entry_map;
 };
