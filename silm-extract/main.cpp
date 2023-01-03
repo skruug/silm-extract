@@ -14,11 +14,12 @@ extern "C"
 #include <filesystem>
 #include <iostream>
 #include <fstream>
+#include <set>
 
 #include "extractor.hpp"
 
 #define kSEPAppName           "silm-extract"
-#define kSEPAppVersion        "0.1"
+#define kSEPAppVersion        "0.9"
 
 static void usage() {
     printf("%s v%s\n",
@@ -29,12 +30,25 @@ static void usage() {
     printf("  %s <file> | <dir> [options]\n", kSEPAppName);
     printf("\n");
     printf("Options:\n");
-    printf("  -h        This help info.\n");
-    printf("  -l        List all extractable assets.\n");
-    printf("  -o <dir>  Output directory.\n");
-    printf("  -p <file> Palette override.\n");
-    printf("  -f        Force 32 bit depth for all sprites.\n");
+    printf("  -h            This help info.\n");
+    printf("  -l            List all extractable assets.\n");
+    printf("  -t <options>  Specify types of data to extract.\n                ( all | img | pal | cmp | snd )\n");
+    printf("  -o <dir>      Output directory.\n");
+    printf("  -p <file>     Palette override.\n");
+    printf("  -f            Force 32 bit depth for all sprites.\n");
     printf("\n");
+}
+
+void tokenize(std::string const& str, const char delim, std::vector<std::string>& out)
+{
+    size_t start;
+    size_t end = 0;
+ 
+    while ((start = str.find_first_not_of(delim, end)) != std::string::npos)
+    {
+        end = str.find(delim, start);
+        out.push_back(str.substr(start, end - start));
+    }
 }
 
 int main(int argc, const char * argv[])
@@ -78,6 +92,7 @@ int main(int argc, const char * argv[])
             path palette = "";
             bool force_tc = false;
             bool list_only = false;
+            uint32_t ex_type = ex_everything;
 
             for (int c = 1; c < argc; c++)
             {
@@ -107,7 +122,48 @@ int main(int argc, const char * argv[])
                         
                     c++;
                 }
-                
+
+                if (cmd == "-t" && c + 1 < argc)
+                {
+                    ex_type = ex_none;
+                    
+                    std::string types = argv[c + 1];
+                    std::string delimiter = "|";
+                    std::vector<std::string> out;
+                    tokenize(types, '|', out);
+                    
+                    for (auto &s: out)
+                    {
+                        if (s == "all")
+                        {
+                            ex_type = ex_everything;
+                        }
+                        else if (s == "img")
+                        {
+                            ex_type |= ex_image;
+                        }
+                        else if (s == "pal")
+                        {
+                            ex_type |= ex_palette;
+                        }
+                        else if (s == "cmp")
+                        {
+                            ex_type |= ex_draw;
+                        }
+                        else if (s == "snd")
+                        {
+                            ex_type |= ex_sound;
+                        }
+                        else
+                        {
+                            std::cout << "Wrong extract type!" << std::endl;
+                            return errno;
+                        }
+                    }
+                        
+                    c++;
+                }
+
                 if (cmd == "-p" && c + 1 < argc)
                 {
                     palette = argv[c + 1];
@@ -168,11 +224,11 @@ int main(int argc, const char * argv[])
             extractor ex = extractor(output, paldata, force_tc, list_only);
             if (std::filesystem::is_directory(input))
             {
-                ex.extract_dir(input);
+                ex.extract_dir(input, ex_type);
             }
             else
             {
-                ex.extract_file(input);
+                ex.extract_file(input, ex_type);
             }
         }
         

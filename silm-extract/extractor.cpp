@@ -7,6 +7,7 @@
 
 #include "extractor.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <iostream>
@@ -79,6 +80,7 @@ bool extractor::is_script(const path& file)
     {
         if (v == e)
         {
+            _platform_ext = e;
             return true;
         }
     }
@@ -269,7 +271,7 @@ void extractor::write_png_file(const char *filename, int width, int height, png_
     png_free_data(png, info, mask, -1);
 }
 
-int asset_size(const uint8_t *buffer)
+int extractor::asset_size(const uint8_t *buffer)
 {
     int h0 = buffer[0];
     int h1 = buffer[1];
@@ -280,7 +282,7 @@ int asset_size(const uint8_t *buffer)
     {
         case 0x01:
         {
-            return 4 * 2;
+            return 2 * 2;
         }
         case 0x00:
         case 0x02:
@@ -292,8 +294,8 @@ int asset_size(const uint8_t *buffer)
             bytes[1] = buffer[2 + 2];
             bytes[0] = buffer[2 + 3];
             int height = *(uint16_t *)(bytes) + 1;
-
-            return (width / 2) * height;;
+            
+            return width / (_platform_ext == "mo" ? 4 :  2) * height;
         }
         case 0x10:
         case 0x12:
@@ -358,7 +360,7 @@ int asset_size(const uint8_t *buffer)
     return 0;
 }
 
-bool does_it_overlap(const uint8_t *buffer, int address, int entries, int skip_entry, int location, int length)
+bool extractor::does_it_overlap(const uint8_t *buffer, int address, int entries, int skip_entry, int location, int length)
 {
     uint8_t bytes[4];
     for (int e = 0; e < entries; e ++)
@@ -373,20 +375,10 @@ bool does_it_overlap(const uint8_t *buffer, int address, int entries, int skip_e
 
             uint32_t eloc = position + 2 + (*(uint32_t *)(bytes));
             uint32_t esize = asset_size(buffer + eloc - 2);
+            
             if (eloc + esize > location && eloc < location + length)
             {
-                if (buffer[eloc - 2] == 0x00 || buffer[eloc - 2] == 0x02)
-                {
-                    esize /= 2;
-                    if (eloc + esize > location && eloc < location + length)
-                    {
-                        return true;
-                    }
-                }
-                else
-                {
-                    return true;
-                }
+                return true;
             }
         }
     }
@@ -394,7 +386,7 @@ bool does_it_overlap(const uint8_t *buffer, int address, int entries, int skip_e
     return false;
 }
 
-bool does_it_fit(const uint8_t *buffer, int length, int a, int e)
+bool extractor::does_it_fit(const uint8_t *buffer, int length, int a, int e)
 {
     uint8_t bytes[4];
     uint32_t value;
@@ -636,50 +628,56 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t mod, uint32_t address,
             
             int at = location + 4;
             int to = 0;
-
-            if (does_it_overlap(script.data, address, entries, index, location, (width / 2) * height) == false && at + (width / 2) * height < script.size)
-            {
-                uint8_t *data = new uint8_t[width * height];
-
-                for (int x = 0; x < (width / 2) * height; x++, at++)
-                {
-                    uint8_t r = script[at];
-                    uint8_t a = ((r & 0b11110000) >> 4);
-                    uint8_t b = (r & 0b00001111);
-
-                    data[to++] = a;
-                    data[to++] = b;
-                }
-
-                return (_entry_map[index] = new Entry(data_type::image4ST, location, Buffer(data, width * height)));
-            }
-            else if (does_it_overlap(script.data, address, entries, index, location, (width / 4) * height) == false && at + (width / 4) * height < script.size)
-            {
-                uint8_t *data = new uint8_t[width * height];
-                uint8_t pixels[16];
-
-                for (int b = 0; b < width * height; b+=16)
-                {
-                    for (int c = 0; c < 8; c++)
-                    {
-                        uint8_t rot = (7 - c);
-                        uint8_t mask = 1 << rot;
-                        pixels[0 + c] = (((script[at + 0] & mask) >> rot) << 7) | ((script[at + 2] & mask) >> rot);
-                        pixels[8 + c] = (((script[at + 1] & mask) >> rot) << 7) | ((script[at + 3] & mask) >> rot);
-                    }
-
-                    for (int d = 0; d < 16; d++)
-                    {
-                        data[to + d] = pixels[d];
-                    }
-
-                    at+=4;
-                    to+=16;
-                }
-
-                return (_entry_map[index] = new Entry(data_type::image2, location, Buffer(data, width * height)));
-            }
             
+            if (_platform_ext == "mo" )
+            {
+                // 2 bit
+                if (does_it_overlap(script.data, address, entries, index, location, (width / 4) * height) == false && at + (width / 4) * height < script.size)
+                {
+                    uint8_t *data = new uint8_t[width * height];
+                    uint8_t pixels[16];
+
+                    for (int b = 0; b < width * height; b+=16)
+                    {
+                        for (int c = 0; c < 8; c++)
+                        {
+                            uint8_t rot = (7 - c);
+                            uint8_t mask = 1 << rot;
+                            pixels[0 + c] = (((script[at + 0] & mask) >> rot) << 7) | ((script[at + 2] & mask) >> rot);
+                            pixels[8 + c] = (((script[at + 1] & mask) >> rot) << 7) | ((script[at + 3] & mask) >> rot);
+                        }
+
+                        for (int d = 0; d < 16; d++)
+                        {
+                            data[to + d] = pixels[d];
+                        }
+
+                        at+=4;
+                        to+=16;
+                    }
+
+                    return (_entry_map[index] = new Entry(data_type::image2, location, Buffer(data, width * height)));
+                }
+            }
+            else
+            {
+                if (does_it_overlap(script.data, address, entries, index, location, (width / 2) * height) == false && at + (width / 2) * height < script.size)
+                {
+                    uint8_t *data = new uint8_t[width * height];
+                    
+                    for (int x = 0; x < (width / 2) * height; x++, at++)
+                    {
+                        uint8_t r = script[at];
+                        uint8_t a = ((r & 0b11110000) >> 4);
+                        uint8_t b = (r & 0b00001111);
+                        
+                        data[to++] = a;
+                        data[to++] = b;
+                    }
+                    
+                    return (_entry_map[index] = new Entry(data_type::image4ST, location, Buffer(data, width * height)));
+                }
+            }
             break;
         }
         case 0x10:
@@ -807,8 +805,8 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t mod, uint32_t address,
                 // uint16   draw order
                 // uint16   y origin (from bottom side of screen to bitmap center)
                 
-                std::map<int, uint8_t *> layers;
-                
+                std::map<int, std::vector<int>> layers;
+
                 // HACK: we don't know where on screen script wants to draw
                 // so, to actually display anything, check if positions fit screen, if not center it.
                 
@@ -864,6 +862,8 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t mod, uint32_t address,
                                 maxY = yy + height;
                         }
                     }
+                    
+                    layers[d].push_back(b);
                 }
                 
                 int modX = 0;
@@ -878,137 +878,114 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t mod, uint32_t address,
                     modY = (composite_height / 2) - (((maxY - minY) / 2) + minY);
                 }
                 
-                for (int b = 0; b < h1; b++)
+                for (auto it = layers.rbegin(); it != layers.rend(); it++)
                 {
-                    bytes[0] = script[b * 8 + location + 0];
-                    uint8_t cmd = (*(uint8_t *)(bytes));
-                    
-                    bytes[0] = script[b * 8 + location + 1];
-                    uint8_t idx = (*(uint8_t *)(bytes));
-                    
-                    bytes[1] = script[b * 8 + location + 2];
-                    bytes[0] = script[b * 8 + location + 3];
-                    int16_t x = (*(int16_t *)(bytes));
-                    
-                    bytes[1] = script[b * 8 + location + 4];
-                    bytes[0] = script[b * 8 + location + 5];
-                    int16_t d = (*(int16_t *)(bytes));
-                    
-                    bytes[1] = script[b * 8 + location + 6];
-                    bytes[0] = script[b * 8 + location + 7];
-                    int16_t y = (*(int16_t *)(bytes));
-                    
-                    if (layers[d] == NULL)
+                    for (auto &b: it->second)
                     {
-                        layers[d] = new uint8_t[composite_width * composite_height];
-                        memset(layers[d], 0, composite_width * composite_height);
-                    }
-                    
-                    if (idx >= 0 && idx < entries)
-                    {
-                        Entry *entry = get_entry_data(script, mod, address, entries, idx);
-                        if (entry->type != none && entry->type != unknown)
+                        bytes[0] = script[b * 8 + location + 0];
+                        uint8_t cmd = (*(uint8_t *)(bytes));
+                        
+                        bytes[0] = script[b * 8 + location + 1];
+                        uint8_t idx = (*(uint8_t *)(bytes));
+                        
+                        bytes[1] = script[b * 8 + location + 2];
+                        bytes[0] = script[b * 8 + location + 3];
+                        int16_t x = (*(int16_t *)(bytes));
+                        
+                        bytes[1] = script[b * 8 + location + 4];
+                        bytes[0] = script[b * 8 + location + 5];
+                        int16_t d = (*(int16_t *)(bytes));
+                        
+                        bytes[1] = script[b * 8 + location + 6];
+                        bytes[0] = script[b * 8 + location + 7];
+                        int16_t y = (*(int16_t *)(bytes));
+                        
+                        if (idx >= 0 && idx < entries)
                         {
-                            bytes[1] = script[entry->position + 0];
-                            bytes[0] = script[entry->position + 1];
-                            int width = *(uint16_t *)(bytes) + 1;
-                            
-                            bytes[1] = script[entry->position + 2];
-                            bytes[0] = script[entry->position + 3];
-                            int height = *(uint16_t *)(bytes) + 1;
-                            
-                            int xx = 1 + x - ((width + 1) / 2);
-                            xx += modX;
-                            
-                            // int yy = composite_height - (d + y + ((height + 1) / 2));
-                            int yy = composite_height - (y + ((height + 1) / 2));
-                            yy += modY;
-                            
-                            int vs = 0;
-                            int vf = yy;
-                            int vt = height;
-                            if (vf < 0)
+                            Entry *entry = get_entry_data(script, mod, address, entries, idx);
+                            if (entry->type != none && entry->type != unknown)
                             {
-                                vf = 0;
-                                vt += yy;
-                                vs -= yy;
-                            }
-                            
-                            if (vt + vf >= composite_height)
-                            {
-                                vt = composite_height - vf;
-                            }
-                            
-                            int hs = 0;
-                            int hf = xx;
-                            int ht = width;
-                            if (hf < 0)
-                            {
-                                hf = 0;
-                                ht += xx;
-                                hs -= xx;
-                            }
-                            
-                            if (ht + hf >= composite_width)
-                            {
-                                ht = composite_width - hf;
-                            }
-                            
-                            uint8_t *layer = layers[d];
-                            
-                            if (entry->type == data_type::image2 || entry->type == data_type::image4ST || entry->type == data_type::image4 || entry->type == data_type::image8)
-                            {
-                                int clear = 0;
-                                if (entry->type == data_type::image4)
+                                bytes[1] = script[entry->position + 0];
+                                bytes[0] = script[entry->position + 1];
+                                int width = *(uint16_t *)(bytes) + 1;
+                                
+                                bytes[1] = script[entry->position + 2];
+                                bytes[0] = script[entry->position + 3];
+                                int height = *(uint16_t *)(bytes) + 1;
+                                
+                                int xx = 1 + x - ((width + 1) / 2);
+                                xx += modX;
+                                
+                                // int yy = composite_height - (d + y + ((height + 1) / 2));
+                                int yy = composite_height - (y + ((height + 1) / 2));
+                                yy += modY;
+                                
+                                int vs = 0;
+                                int vf = yy;
+                                int vt = height;
+                                if (vf < 0)
                                 {
-                                    clear = script[entry->position + 5] + script[entry->position + 4];
+                                    vf = 0;
+                                    vt += yy;
+                                    vs -= yy;
                                 }
                                 
-                                if (entry->type == data_type::image8)
+                                if (vt + vf >= composite_height)
                                 {
-                                    clear = script[entry->position + 5];
+                                    vt = composite_height - vf;
                                 }
                                 
-                                for (int h = vs; h < vs + vt; h++)
+                                int hs = 0;
+                                int hf = xx;
+                                int ht = width;
+                                if (hf < 0)
                                 {
-                                    for (int w = hs; w < hs + ht; w++)
+                                    hf = 0;
+                                    ht += xx;
+                                    hs -= xx;
+                                }
+                                
+                                if (ht + hf >= composite_width)
+                                {
+                                    ht = composite_width - hf;
+                                }
+                                
+                                if (entry->type == data_type::image2 || entry->type == data_type::image4ST || entry->type == data_type::image4 || entry->type == data_type::image8)
+                                {
+                                    int clear = 0;
+                                    if (entry->type == data_type::image4)
                                     {
-                                        uint8_t color = entry->buffer.data[(cmd ? width - (w + 1) : w) + h * width];
-                                        if (color != clear)
+                                        clear = script[entry->position + 5] + script[entry->position + 4];
+                                    }
+                                    
+                                    if (entry->type == data_type::image8)
+                                    {
+                                        clear = script[entry->position + 5];
+                                    }
+                                    
+                                    for (int h = vs; h < vs + vt; h++)
+                                    {
+                                        for (int w = hs; w < hs + ht; w++)
                                         {
-                                            uint8_t *ptr = layer + xx + w + ((yy + h) * composite_width);
-                                            *ptr = color;
+                                            uint8_t color = entry->buffer.data[(cmd ? width - (w + 1) : w) + h * width];
+                                            if (color != clear)
+                                            {
+                                                uint8_t *ptr = data + xx + w + ((yy + h) * composite_width);
+                                                *ptr = color;
+                                            }
                                         }
                                     }
                                 }
-                            }
-                            else if (entry->type == data_type::rectangle)
-                            {
-                                for (int h = vs; h < vt; h++)
+                                else if (entry->type == data_type::rectangle)
                                 {
-                                    memset(layer + hf + ((yy + h) * composite_width), 0, ht);
+                                    for (int h = vs; h < vt; h++)
+                                    {
+                                        memset(data + hf + ((yy + h) * composite_width), 0, ht);
+                                    }
                                 }
                             }
                         }
                     }
-                }
-                
-                for (auto it = layers.rbegin(); it != layers.rend(); it++)
-                {
-                    for (int p = 0; p < composite_height; p++)
-                    {
-                        uint8_t *ptr = data + p * composite_width;
-                        for (int a = 0; a < composite_width; a++, ptr++)
-                        {
-                            uint8_t color = it->second[a + p * composite_width];
-                            if (color)
-                            {
-                                *ptr = color;
-                            }
-                        }
-                    }
-                    
-                    delete [] it->second;
                 }
                 
                 return (_entry_map[index] = new Entry(data_type::composite, location, Buffer(data, composite_width * composite_height)));
@@ -1066,9 +1043,9 @@ const char *string_for_type(data_type type)
         case image2:
             return "bitmap 2 bit";
         case image4ST:
-            return "bitmap 4 bit v1";
+            return "bitmap 4 bit";
         case image4:
-            return "bitmap 4 bit v2";
+            return "bitmap 4 bit (using 8 bit palette)";
         case image8:
             return "bitmap 8 bit";
         case video:
@@ -1086,6 +1063,142 @@ const char *string_for_type(data_type type)
     };
 
     return "unknown";
+}
+
+// NOTE: just a Hex Fiend template to make orientation easier :-)
+void extractor::save_xml(const std::string& name, uint8_t *buffer, int length, uint32_t address, uint32_t entries, uint32_t mod, vector<Entry *> entryList)
+{
+    std::filesystem::path filename = std::filesystem::path(_out_dir) / (name + " .tcl");
+    FILE *fp = fopen(filename.string().c_str(), "wb");
+    if (!fp)
+        abort();
+
+    const char *tcl_header = "big_endian\n\
+section \"Header\" {\n\
+    # 0...1 : word\n\
+    uint16 \"scriptID\"\n\
+    # 2...3 : word\n\
+    uint16 \"read at 18e96, in vram-0x2e\"\n\
+    # 4...5 : word\n\
+    uint16 \"code start offset - 2\"\n\
+    # 6...9 : dword\n\
+    uint32 \"offset to subscript routine\"\n\
+    # 10...13 : dword\n\
+    uint32 \"offset to interrupt routine\"\n\
+    # 14...17 : dword\n\
+    uint32 \"???\"\n\
+    # 18...19 : word\n\
+    uint16 \"word #3 read at 18e32\"\n\
+    # 20...21 : word\n\
+    uint16 \"ram to allocate\"\n\
+    # 22...23 : word\n\
+    uint16 \"word #5 read at 18e38\"\n\
+}\n";
+    const char *tcl_block_end = "}\n";
+    char tcl_buffer[256] = "";
+    
+    if (fwrite(tcl_header, strlen(tcl_header), 1, fp) != 1)
+        abort();
+    
+    int tcl_pos = 24;
+    if (address - tcl_pos > 0)
+    {
+        snprintf(tcl_buffer, 256, "bytes %d\n", address - tcl_pos);
+        if (fwrite(tcl_buffer, strlen(tcl_buffer), 1, fp) != 1)
+            abort();
+    }
+    
+    snprintf(tcl_buffer, 256, "section \"Address Block\" {\n");
+    if (fwrite(tcl_buffer, strlen(tcl_buffer), 1, fp) != 1)
+        abort();
+
+    for (int i = 0; i < entries; i ++)
+    {
+        snprintf(tcl_buffer, 256, "    # %d...%d : dword\n    uint32 \"entry %.3d address\"\n", address + i * 4, address + i * 4 + 3, i);
+        if (fwrite(tcl_buffer, strlen(tcl_buffer), 1, fp) != 1)
+            abort();
+    }
+
+    if (fwrite(tcl_block_end, strlen(tcl_block_end), 1, fp) != 1)
+        abort();
+    
+    tcl_pos = (address + entries * 4);
+    
+    uint32_t minloc = INT_MAX;
+    
+    std::map<uint32_t, uint32_t> loc_map;
+    
+    uint8_t bytes[4];
+    uint32_t value = 0;
+    uint32_t location = 0;
+
+    for (int i = 0; i < entries; i ++)
+    {
+        uint32_t position = address + i * 4;
+        bytes[3] = buffer[position + 0];
+        bytes[2] = buffer[position + 1];
+        bytes[1] = buffer[position + 2];
+        bytes[0] = buffer[position + 3];
+        value = (*(uint32_t *)(bytes));
+        
+        location = position + value;
+        
+        loc_map[location] = i;
+        
+        minloc = std::min(minloc, location);
+    }
+    
+    if (minloc - tcl_pos > 0)
+    {
+        snprintf(tcl_buffer, 256, "bytes %d\n", minloc - tcl_pos);
+        if (fwrite(tcl_buffer, strlen(tcl_buffer), 1, fp) != 1)
+            abort();
+    }
+    
+    tcl_pos = minloc;
+
+    snprintf(tcl_buffer, 256, "section \"Assets Block\" {\n");
+    if (fwrite(tcl_buffer, strlen(tcl_buffer), 1, fp) != 1)
+        abort();
+    
+    for (auto it = loc_map.begin(); it != loc_map.end(); it++)
+    {
+        int i = it->second;
+
+        uint32_t position = address + i * 4;
+        bytes[3] = buffer[position + 0];
+        bytes[2] = buffer[position + 1];
+        bytes[1] = buffer[position + 2];
+        bytes[0] = buffer[position + 3];
+        value = (*(uint32_t *)(bytes));
+
+        location = position + 2 + value;
+        
+        if (value > 0 && location < length)
+        {
+            int as_size = asset_size(buffer + location - 2);
+            
+            Entry *entry = entryList[i];
+            
+            if ((int)(location - 2ul) - tcl_pos > 0)
+            {
+                snprintf(tcl_buffer, 256, "    bytes %d\n", (location - 2) - tcl_pos);
+                if (fwrite(tcl_buffer, strlen(tcl_buffer), 1, fp) != 1)
+                    abort();
+            }
+           
+            tcl_pos = location + as_size;
+            
+            snprintf(tcl_buffer, 256, "    # %d...%d : bytes\n    hex %d \"entry %.3d %s\"\n", location - 2, location + as_size, as_size + 2, i, string_for_type(entry->type));
+            if (fwrite(tcl_buffer, strlen(tcl_buffer), 1, fp) != 1)
+                abort();
+        }
+    }
+    
+    if (fwrite(tcl_block_end, strlen(tcl_block_end), 1, fp) != 1)
+        abort();
+    
+    fclose(fp);
 }
 
 void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int length, uint32_t etype, vector<uint8_t *> *pal_overrides)
@@ -1107,7 +1220,7 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
     {
         return;
     }
-    
+
     // identify known types and save them
     // (for the moment bitmaps, rectangles, palettes, draw commands, samples and fli videos are recognized)
     
@@ -1122,7 +1235,7 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
     set_palette(script, address, entries);
 
     vector<Entry *> entryList;
-    
+
     for (int i = 0; i < entries; i ++)
     {
         entryList.push_back(NULL);
@@ -1195,7 +1308,7 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
                     bytes[1] = buffer[location + 2];
                     bytes[0] = buffer[location + 3];
                     height = *(uint16_t *)(bytes) + 1;
-                    log_data(buffer, location - 2, 2, 0, "%s bit, %d x %d ", string_for_type(entry->type), width, height);
+                    log_data(buffer, location - 2, 2, 0, "%s, %d x %d ", string_for_type(entry->type), width, height);
                     
                     if (_list_only == false && etype & ex_image)
                     {

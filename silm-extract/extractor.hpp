@@ -32,7 +32,7 @@ enum data_type {
     
     none        = 0,
     image2      = 1,
-    image4ST   = 2,
+    image4ST    = 2,
     image4      = 3,
     image8      = 4,
     video       = 5,
@@ -54,7 +54,8 @@ enum extract_type {
     ex_rectangle   = 1 << 4,
     ex_sound       = 1 << 5,
     ex_ranges      = 1 << 6,
-    ex_everything  = 0xFFFFFFFF
+    ex_everything  = 0xFFFFFFFF,
+    ex_none        = 0x0
 };
 
 struct Buffer {
@@ -106,8 +107,16 @@ private:
 
     void write_buffer(const std::filesystem::path& path, const Buffer& buffer);
     void write_png_file(const char *filename, int width, int height, png_byte color_type, png_byte bit_depth, uint8_t *data, uint8_t *palette = NULL);
+    
+    int asset_size(const uint8_t *buffer);
+    
+    bool does_it_fit(const uint8_t *buffer, int length, int a, int e);
+    bool does_it_overlap(const uint8_t *buffer, int address, int entries, int skip_entry, int location, int length);
+
+    void save_xml(const std::string& name, uint8_t *buffer, int length, uint32_t address, uint32_t entries, uint32_t mod, vector<Entry *> entryList);
 
     alis_platform _platform;
+    std::string _platform_ext;
     
     std::filesystem::path _out_dir;
     
