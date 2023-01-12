@@ -417,103 +417,31 @@ int compare_arrays(const uint8_t *a, const uint8_t *b, int n)
 bool extractor::find_assets(const uint8_t *buffer, int length, uint32_t& address, uint32_t& entries, uint32_t& mod)
 {
     uint32_t location;
-    
-    mod = 0;
+    int add = buffer[0] ? 6 : 0;
 
-    uint8_t pattern1[] = { 0x44, 0x00, 0x00, 0x00, 0x00, 0x58, 0x00, 0x00, 0x00, 0x00, 0x00, 0x58, 0x00, 0x00, 0x00, 0x00, 0x00, 0x58 };
-    uint8_t pattern2[] = { 0x44, 0x00, 0x00, 0x00, 0x58, 0x00, 0x00, 0x00, 0x00, 0x00, 0x58, 0x00, 0x00, 0x00, 0x00, 0x00, 0x58 };
-
-    int a, e;
-    for (int i = 8/*start*/; i < length; i ++)
+    // look for graphics
+    location = read4b(buffer + 0xe + add) + add;
+    address = (location + read4b(buffer + location));
+    entries = read2b(buffer + location + 4);
+    if (entries)
     {
-        // NOTE: osadd
-        if (buffer[i + 1] == 0x44)
-        {
-            location = i + 2 + i % 2;
-            a = read4b(buffer + location);
-
-            location = location + 4;
-            e = read2b(buffer + location);
-
-            if (a && e)
-            {
-                a += location - 4;
-
-                uint32_t test = a + e * 4;
-                if (test < length && does_it_fit(buffer, length, a, e))
-                {
-                    cout << "Found address block [0x" << std::hex << std::setw(6) << std::setfill('0') << (i + 2 + i % 2) << "]";
-                    
-                    address = a;
-                    entries = e;
-                    return true;
-                }
-            }
-            
-            int location = 0;
-            if (compare_arrays(buffer + 1 + i, pattern1, sizeof(pattern1)))
-            {
-                location = 1 + i + sizeof(pattern1);
-            }
-            
-            if (compare_arrays(buffer + 1 + i, pattern2, sizeof(pattern2)))
-            {
-                location = 1 + i + sizeof(pattern2);
-            }
-            
-            if (location)
-            {
-                e = read2b(buffer + location);
-                
-                location = location + 6;
-                for (int idx = location; idx < length; idx ++)
-                {
-                    if (buffer[idx] != 0)
-                    {
-                        // address
-                        
-                        address = location = idx - (2 + (idx % 2));
-                        
-                        bool reset = false;
-                        
-                        for (int s = 0; s < e; s++)
-                        {
-                            a = read4b(buffer + location);
-
-                            uint32_t test = (location + a + 8);
-                            if (test >= length)
-                            {
-                                reset = true;
-                                break;
-                            }
-
-                            uint32_t len = read4b(buffer + location + a + 2) - 1;
-                            if ((uint32_t)(location + a + len) >= length || len >= length)
-                            {
-                                reset = true;
-                                break;
-                            }
-                            
-                            location += 4;
-                        }
-                        
-                        if (reset == false)
-                        {
-                            // sucess
-                            
-                            mod = 0x100;
-                            entries = e;
-                            return true;
-                        }
-                        
-                        reset = false;
-                    }
-                }
-            }
-        }
+        cout << "Found gfx address block [0x" << std::hex << std::setw(6) << std::setfill('0') << location << "]" << " [0x" << std::hex << std::setw(6) << std::setfill('0') << address << "]" << endl;
+        mod = 0;
+        return true;
+    }
+    
+    // look for sound
+    location = read4b(buffer + 0xe + add) + add;
+    address = read4b(buffer + 0xc + location) + location;
+    entries = read2b(buffer + 0x10 + location);
+    if (entries)
+    {
+        cout << "Found snd address block [0x" << std::hex << std::setw(6) << std::setfill('0') << location << "]" << " [0x" << std::hex << std::setw(6) << std::setfill('0') << address << "]" << endl;
+        mod = 0x100;
+        return true;
     }
 
-    cout << "Can't found address block";
+    cout << "Can't found address block" << endl;
     return false;
 }
 
@@ -1396,6 +1324,10 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
         }
     }
 
+    // xml
+    
+    save_xml(name, buffer, length, address, entries, mod, entryList);
+    
     // cleanup
     
     for (auto & entryPair : _entry_map)
