@@ -126,6 +126,8 @@ void extractor::extract_file(const path& file, uint32_t type, vector<uint8_t *> 
         unpacked_size = unpack_script(file.string().c_str(), platform->is_little_endian, &unpacked);
         if (unpacked_size >= 0)
         {
+            _is_packed = true;
+
             extract_buffer(name, unpacked, unpacked_size, type, pal_overrides);
             free(unpacked);
         }
@@ -134,6 +136,8 @@ void extractor::extract_file(const path& file, uint32_t type, vector<uint8_t *> 
             // probably not gona to work, but what the hell :-)
             // it could only work on unpacked files
             
+            _is_packed = false;
+
             unpacked_size = (int)length;
             unpacked = (uint8_t *)buffer;
 
@@ -417,10 +421,15 @@ int compare_arrays(const uint8_t *a, const uint8_t *b, int n)
 bool extractor::find_assets(const uint8_t *buffer, int length, uint32_t& address, uint32_t& entries, uint32_t& mod)
 {
     uint32_t location;
-    int add = buffer[0] ? 6 : 0;
+
+    int add = _is_packed ? 0 : 6;
 
     // look for graphics
+    
     location = read4b(buffer + 0xe + add) + add;
+    if (location + 6 >= length)
+        return false;
+    
     address = (location + read4b(buffer + location));
     entries = read2b(buffer + location + 4);
     if (entries)
@@ -429,9 +438,13 @@ bool extractor::find_assets(const uint8_t *buffer, int length, uint32_t& address
         mod = 0;
         return true;
     }
-    
+
     // look for sound
+    
     location = read4b(buffer + 0xe + add) + add;
+    if (location + 6 >= length)
+        return false;
+
     address = read4b(buffer + 0xc + location) + location;
     entries = read2b(buffer + 0x10 + location);
     if (entries)
@@ -441,7 +454,7 @@ bool extractor::find_assets(const uint8_t *buffer, int length, uint32_t& address
         return true;
     }
 
-    cout << "Can't found address block" << endl;
+    cout << "Can't find address block" << endl;
     return false;
 }
 
@@ -824,6 +837,9 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t mod, uint32_t address,
         case 0x104:
         {
             uint32_t len = read4b(script.data + location) - 1;
+            if (location + len >= script.size)
+                break;
+            
             uint8_t *data = new uint8_t[len];
             memcpy(data, script.data + location + 4, len);
 
@@ -833,6 +849,9 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t mod, uint32_t address,
         case 0x102:
         {
             uint32_t len = read4b(script.data + location) - 1;
+            if (location + len >= script.size)
+                break;
+
             uint8_t *data = new uint8_t[len];
             memcpy(data, script.data + location + 4, len);
 

@@ -132,7 +132,8 @@ private:
     bool _list_only;
     
     bool _is_little_endian;
-    
+    bool _is_packed;
+
     std::map<int, Entry *> _entry_map;
 };
 
