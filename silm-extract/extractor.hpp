@@ -109,9 +109,6 @@ private:
     void write_png_file(const char *filename, int width, int height, png_byte color_type, png_byte bit_depth, uint8_t *data, uint8_t *palette = NULL);
     
     int asset_size(const uint8_t *buffer);
-    
-    bool does_it_fit(const uint8_t *buffer, int length, int a, int e);
-    bool does_it_overlap(const uint8_t *buffer, int address, int entries, int skip_entry, int location, int length);
 
     void save_xml(const std::string& name, uint8_t *buffer, int length, uint32_t address, uint32_t entries, uint32_t mod, vector<Entry *> entryList);
 
@@ -133,6 +130,7 @@ private:
     
     bool _is_little_endian;
     bool _is_packed;
+    int8_t _type;
 
     std::map<int, Entry *> _entry_map;
 };

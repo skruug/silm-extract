@@ -119,17 +119,22 @@ void extractor::extract_file(const path& file, uint32_t type, vector<uint8_t *> 
 
         int unpacked_size = 0;
         uint8_t *unpacked = NULL;
-        
+
         sPlatform *platform = pl_guess(file.string().c_str());
         _is_little_endian = platform->is_little_endian;
 
-        unpacked_size = unpack_script(file.string().c_str(), platform->is_little_endian, &unpacked);
-        if (unpacked_size >= 0)
+        u32 magic = read4b((const uint8_t *)buffer);
+        _type = magic >> 24;
+        if (_type < 0)
         {
-            _is_packed = true;
-
-            extract_buffer(name, unpacked, unpacked_size, type, pal_overrides);
-            free(unpacked);
+            unpacked_size = unpack_script(file.string().c_str(), platform->is_little_endian, &unpacked);
+            if (unpacked_size >= 0)
+            {
+                _is_packed = true;
+                
+                extract_buffer(name, unpacked, unpacked_size, type, pal_overrides);
+                free(unpacked);
+            }
         }
         else
         {
@@ -370,43 +375,6 @@ int extractor::asset_size(const uint8_t *buffer)
     return 0;
 }
 
-bool extractor::does_it_overlap(const uint8_t *buffer, int address, int entries, int skip_entry, int location, int length)
-{
-    for (int e = 0; e < entries; e ++)
-    {
-        if (skip_entry != e)
-        {
-            uint32_t position = address + e * 4;
-            uint32_t eloc = position + 2 + read4b(buffer + position);
-            uint32_t esize = asset_size(buffer + eloc - 2);
-            
-            if (eloc + esize > location && eloc < location + length)
-            {
-                return true;
-            }
-        }
-    }
-    
-    return false;
-}
-
-bool extractor::does_it_fit(const uint8_t *buffer, int length, int a, int e)
-{
-    uint32_t value;
-
-    for (int i = 0; i < e; i ++)
-    {
-        uint32_t position = a + i * 4;
-        value = read4b(buffer + position);
-        if (value <= 0 || (position + 2 + value) >= length)
-        {
-            return false;
-        }
-    }
-    
-    return true;
-}
-
 int compare_arrays(const uint8_t *a, const uint8_t *b, int n)
 {
     for (int i = 0; i < n; i++)
@@ -522,54 +490,77 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t mod, uint32_t address,
             int at = location + 4;
             int to = 0;
             
-            if (_platform_ext == "mo" )
+            if (_platform_ext == "mo")
             {
                 // 2 bit
-                if (does_it_overlap(script.data, address, entries, index, location, (width / 4) * height) == false && at + (width / 4) * height < script.size)
+                uint8_t *data = new uint8_t[width * height];
+                uint8_t pixels[16];
+                
+                for (int b = 0; b < width * height; b+=16)
                 {
-                    uint8_t *data = new uint8_t[width * height];
-                    uint8_t pixels[16];
-
-                    for (int b = 0; b < width * height; b+=16)
+                    for (int c = 0; c < 8; c++)
                     {
-                        for (int c = 0; c < 8; c++)
-                        {
-                            uint8_t rot = (7 - c);
-                            uint8_t mask = 1 << rot;
-                            pixels[0 + c] = (((script[at + 0] & mask) >> rot) << 7) | ((script[at + 2] & mask) >> rot);
-                            pixels[8 + c] = (((script[at + 1] & mask) >> rot) << 7) | ((script[at + 3] & mask) >> rot);
-                        }
+                        uint8_t rot = (7 - c);
+                        uint8_t mask = 1 << rot;
+                        pixels[0 + c] = (((script[at + 0] & mask) >> rot) << 7) | ((script[at + 2] & mask) >> rot);
+                        pixels[8 + c] = (((script[at + 1] & mask) >> rot) << 7) | ((script[at + 3] & mask) >> rot);
+                    }
+                    
+                    for (int d = 0; d < 16; d++)
+                    {
+                        data[to + d] = pixels[d] ? 255 : 0;
+                    }
+                    
+                    at+=4;
+                    to+=16;
+                }
+                
+                return (_entry_map[index] = new Entry(data_type::image2, location, Buffer(data, width * height)));
+            }
+            else if ((_type & 1) == 0 && _platform_ext == "ao")
+            {
+                // 3 bit
+                uint8_t *data = new uint8_t[width * height * 1024];
+                memset(data, 0, width * height);
+                uint8_t pixels[16];
 
-                        for (int d = 0; d < 16; d++)
-                        {
-                            data[to + d] = pixels[d];
-                        }
-
-                        at+=4;
-                        to+=16;
+                for (int b = 0; b < width * height; b+=16)
+                {
+                    memset(pixels, 0, 16);
+                    for (int c = 0; c < 8; c++)
+                    {
+                        uint32_t rot = (7 - c);
+                        uint32_t mask = 1 << rot;
+                        pixels[8 + c] = (((script[at + 1] & mask) >> rot) << 0) | (((script[at + 3] & mask) >> rot) << 1) | (((script[at + 5] & mask) >> rot) << 2);
+                        pixels[0 + c] = (((script[at + 0] & mask) >> rot) << 0) | (((script[at + 2] & mask) >> rot) << 1) | (((script[at + 4] & mask) >> rot) << 2);
                     }
 
-                    return (_entry_map[index] = new Entry(data_type::image2, location, Buffer(data, width * height)));
+                    for (int d = 0; d < 16; d++)
+                    {
+                        data[to + d] = pixels[d];
+                    }
+
+                    at+=8;
+                    to+=16;
                 }
+
+                return (_entry_map[index] = new Entry(data_type::image2, location, Buffer(data, width * height)));
             }
             else
             {
-                if (does_it_overlap(script.data, address, entries, index, location, (width / 2) * height) == false && at + (width / 2) * height < script.size)
+                uint8_t *data = new uint8_t[width * height];
+                
+                for (int x = 0; x < (width / 2) * height; x++, at++)
                 {
-                    uint8_t *data = new uint8_t[width * height];
-                    
-                    for (int x = 0; x < (width / 2) * height; x++, at++)
-                    {
-                        uint8_t r = script[at];
-                        uint8_t a = ((r & 0b11110000) >> 4);
-                        uint8_t b = (r & 0b00001111);
-                        
-                        data[to++] = a;
-                        data[to++] = b;
-                    }
-                    
-                    return (_entry_map[index] = new Entry(data_type::image4ST, location, Buffer(data, width * height)));
+                    uint8_t r = script[at];
+                    uint8_t a = ((r & 0b11110000) >> 4);
+                    uint8_t b = (r & 0b00001111);
+
+                    data[to++] = a;
+                    data[to++] = b;
                 }
+                
+                return (_entry_map[index] = new Entry(data_type::image4ST, location, Buffer(data, width * height)));
             }
             break;
         }
@@ -632,18 +623,23 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t mod, uint32_t address,
 
             if (h1 == 0x00)
             {
-                for (int f = 0; f < 16; f++)
+                if (_platform_ext == "co")
                 {
-                    uint8_t r = script[location + f * 2 + 0];
-                    r = (r & 0b00000111) << 5;
-                    uint8_t g = script[location + f * 2 + 1];
-                    g = (g >> 4) << 5;
-                    uint8_t b = script[location + f * 2 + 1];
-                    b = (b & 0b00000111) << 5;
-                    
-                    palette_data[to++] = r;
-                    palette_data[to++] = g;
-                    palette_data[to++] = b;
+                    for (s32 i = 0; i < 16; i++)
+                    {
+                        palette_data[to++] = (script[location + i * 2 + 0] & 0b00001111) << 4;
+                        palette_data[to++] = (script[location + i * 2 + 1] >> 4) << 4;
+                        palette_data[to++] = (script[location + i * 2 + 1] & 0b00001111) << 4;
+                    }
+                }
+                else
+                {
+                    for (int i = 0; i < 16; i++)
+                    {
+                        palette_data[to++] = (script[location + i * 2 + 0] & 0b00001111) << 5;
+                        palette_data[to++] = (script[location + i * 2 + 1] >> 4) << 5;
+                        palette_data[to++] = (script[location + i * 2 + 1] & 0b00001111) << 5;
+                    }
                 }
                 
                 _active_pal = palette_data;
@@ -820,9 +816,12 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t mod, uint32_t address,
                                 }
                                 else if (entry->type == data_type::rectangle)
                                 {
-                                    for (int h = vs; h < vt; h++)
+                                    if (ht > 0)
                                     {
-                                        memset(data + hf + ((yy + h) * composite_width), 0, ht);
+                                        for (int h = vs; h < vt; h++)
+                                        {
+                                            memset(data + hf + ((yy + h) * composite_width), 0, ht);
+                                        }
                                     }
                                 }
                             }
