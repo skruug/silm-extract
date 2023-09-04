@@ -852,8 +852,10 @@ Entry *extractor::get_entry_data(Buffer& script, uint32_t mod, uint32_t address,
             if (location + len >= script.size)
                 break;
 
+            len -= 0x10;
+            
             uint8_t *data = new uint8_t[len];
-            memcpy(data, script.data + location + 4, len);
+            memcpy(data, script.data + location + 0x10 - 2, len);
 
             return (_entry_map[index] = new Entry(data_type::sample, location, Buffer(data, len)));
         }
@@ -1029,6 +1031,12 @@ section \"Header\" {\n\
     
     fclose(fp);
 }
+
+u8 tfibo[16] = {
+    0xDE, 0xEB, 0xF3, 0xF8,
+    0xFB, 0xFD, 0xFE, 0xFF,
+    0x01, 0x02, 0x03, 0x05,
+    0x08, 0x0D, 0x15, 0x22 };
 
 void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int length, uint32_t etype, vector<uint8_t *> *pal_overrides)
 {
@@ -1270,10 +1278,38 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
                 case data_type::sample:
                 {
                     int freq = buffer[location - 1];
-                    if (freq < 3 || freq > 23)
-                        freq = 8;
+                    if (freq < 1 || freq > 0x14)
+                        freq = 10;
                     
                     int len = entry->buffer.size;
+                    
+                    u8 *sample = buffer + location - 2;
+                    if (sample[6] == 1/* && script->type & 1*/)
+                    {
+                        s8 temp[1024 * 1024];
+                        
+                        u32 fulllen = read4b(sample + 2);
+                        s8 *smpdata = (s8 *)entry->buffer.data;
+
+                        s32 length = ((fulllen - 0x10) >> 1);
+                        memcpy(temp, smpdata, length);
+
+                        s8 newval = (u8)temp[0];
+                        s8 *smpptr0 = (s8 *)entry->buffer.data + 1;
+                        s8 *smpptr2 = smpptr0;
+                        smpptr2[-1] = newval;
+
+                        for (int i = 1; i < length; i++)
+                        {
+                            smpptr2 = smpptr0;
+                            smpptr2[0] = (newval += (s8)tfibo[(u8)temp[i] >> 4]);
+                            smpptr2[1] = (newval += (s8)tfibo[(u8)temp[i] & 0xf]);
+                            smpptr0 = smpptr2 + 2;
+                        }
+
+                        smpptr2[0] = 0;
+                        smpptr2[1] = 0;
+                    }
 
                     if (_list_only == false && etype & ex_sound)
                     {
@@ -1327,7 +1363,7 @@ void extractor::extract_buffer(const std::string& name, uint8_t *buffer, int len
                         fclose(fp);
                     }
                     
-                    log_data(buffer, location - 2, 2, 4, "PCM sample %d bytes %d Hz", len, freq);
+                    log_data(buffer, location - 2, 2, 4, "PCM sample %d bytes %d Hz ", len, freq);
                     break;
                 }
                 default:
